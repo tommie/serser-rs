@@ -1,6 +1,9 @@
+use std::error;
+use std::fmt;
+
 use crate::token::*;
 
-pub trait Error {
+pub trait Error: error::Error {
     /// The token sink received a token it cannot process.
     fn invalid_token(token: Token<'_>, expected: Option<TokenTypes>) -> Self;
 
@@ -25,6 +28,17 @@ impl Error for E {
     }
 }
 
+impl fmt::Display for E {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::InvalidToken(_, _) => write!(f, "invalid token"),
+            Self::UnexpectedEnd(_) => write!(f, "unexpected end"),
+        }
+    }
+}
+
+impl std::error::Error for E {}
+
 #[derive(Debug)]
 pub struct NoError;
 
@@ -37,3 +51,11 @@ impl Error for NoError {
         unreachable!()
     }
 }
+
+impl fmt::Display for NoError {
+    fn fmt(&self, _f: &mut fmt::Formatter) -> fmt::Result {
+        unreachable!()
+    }
+}
+
+impl std::error::Error for NoError {}

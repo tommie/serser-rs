@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::fmt;
 use std::rc::Rc;
 
 use crate::error::*;
@@ -24,6 +25,17 @@ impl<DE: Error> Error for PrintError<DE> {
         Self::Downstream(DE::unexpected_end(expected))
     }
 }
+
+impl<DE: Error> fmt::Display for PrintError<DE> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::Downstream(err) => fmt::Display::fmt(err, f),
+            Self::Print(err) => fmt::Display::fmt(err, f),
+        }
+    }
+}
+
+impl<DE: Error> std::error::Error for PrintError<DE> {}
 
 /// A token sink that prints a description of the tokens to a writer,
 /// and forwards them to another sink. For debugging.
