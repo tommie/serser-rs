@@ -62,6 +62,7 @@ where
         elem.into_tokens(&mut subsink)?;
     }
     subsink.yield_token(Token::EndSeq)?;
+    sink.end(subsink);
 
     Ok(())
 }

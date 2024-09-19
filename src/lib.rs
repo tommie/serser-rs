@@ -11,17 +11,27 @@ pub mod vec;
 
 pub trait TokenSink {
     type Error: Error;
-    type Subsink<'c>: TokenSink<Error = Self::Error> + 'c where Self: 'c;
+    type Subsink<'c>: TokenSink<Error = Self::Error> + 'c
+    where
+        Self: 'c;
 
     /// Returns the sink to yield tokens to until the corresponding
     /// end token. Sinks are encouraged to panic if `!token.is_start()`.
     ///
     /// The last token yielded to the subsink must be `Token::is_end()`.
-    fn yield_start<'b, 'c>(&'c mut self, token: Token<'b>) -> Result<Self::Subsink<'c>, Self::Error> where Self: 'c;
+    fn yield_start<'b, 'c>(&mut self, token: Token<'b>) -> Result<Self::Subsink<'c>, Self::Error>
+    where
+        Self: 'c;
 
     /// Returns true if it doesn't expect more tokens. Sinks are
     /// encouraged to panic if `token.is_start()`.
     fn yield_token<'b>(&mut self, token: Token<'b>) -> Result<bool, Self::Error>;
+
+    /// Call this when the `yield_start` subsink has received its end
+    /// token.
+    fn end<'b>(&mut self, sink: Self::Subsink<'b>)
+    where
+        Self: 'b;
 
     /// Returns the set of possible token types expected next. The
     /// yield_token function may accept or refuse any token; this is
