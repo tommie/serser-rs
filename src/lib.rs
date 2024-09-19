@@ -11,7 +11,7 @@ pub enum TokenType {
     EndStruct,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct TokenTypes(pub u64);
 
 impl TokenTypes {
@@ -82,7 +82,7 @@ impl std::fmt::Debug for TokenTypes {
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Token<'a> {
     Bool(bool),
     U32(u32),
@@ -128,11 +128,11 @@ pub enum OwningToken {
     EndStruct,
 }
 
-impl<'a> From<&'a Token<'a>> for OwningToken {
-    fn from(v: &'a Token<'a>) -> Self {
+impl<'a> From<Token<'a>> for OwningToken {
+    fn from(v: Token<'a>) -> Self {
         match v {
-            Token::Bool(v) => Self::Bool(*v),
-            Token::U32(v) => Self::U32(*v),
+            Token::Bool(v) => Self::Bool(v),
+            Token::U32(v) => Self::U32(v),
             Token::Seq(meta) => Self::Seq(meta.clone()),
             Token::EndSeq => Self::EndSeq,
             Token::Tuple(meta) => Self::Tuple(meta.clone()),
@@ -170,7 +170,7 @@ pub struct TupleMeta {
     size_hint: Option<usize>,
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StructMeta<'a> {
     size_hint: Option<usize>,
     fields: Option<&'a [&'a str]>,
@@ -182,8 +182,8 @@ pub struct OwningStructMeta {
     fields: Option<Vec<String>>,
 }
 
-impl<'a> From<&'a StructMeta<'a>> for OwningStructMeta {
-    fn from(v: &'a StructMeta<'a>) -> Self {
+impl<'a> From<StructMeta<'a>> for OwningStructMeta {
+    fn from(v: StructMeta<'a>) -> Self {
         Self {
             size_hint: v.size_hint,
             fields: v
@@ -202,14 +202,68 @@ impl<'a> From<&'a OwningStructMeta> for StructMeta<'a> {
     }
 }
 
+pub trait Error {
+    /// The token sink received a token it cannot process.
+    fn invalid_token(token: Token<'_>, expected: Option<TokenTypes>) -> Self;
+
+    /// The token sink is missing tokens, and the value reconstruction
+    /// is not complete.
+    fn unexpected_end(expected: Option<TokenTypes>) -> Self;
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum E {
+    InvalidToken(OwningToken, Option<TokenTypes>),
+    UnexpectedEnd(Option<TokenTypes>),
+}
+
+impl Error for E {
+    fn invalid_token(token: Token<'_>, expected: Option<TokenTypes>) -> Self {
+        E::InvalidToken(token.into(), expected)
+    }
+
+    fn unexpected_end(expected: Option<TokenTypes>) -> Self {
+        E::UnexpectedEnd(expected)
+    }
+}
+
+#[derive(Debug)]
+pub struct NoError;
+
+impl Error for NoError {
+    fn invalid_token(_token: Token<'_>, _expected: Option<TokenTypes>) -> Self {
+        unreachable!()
+    }
+
+    fn unexpected_end(_expected: Option<TokenTypes>) -> Self {
+        unreachable!()
+    }
+}
+
 pub trait TokenSink {
-    type Error;
+    type Error: Error;
 
     // Returns true if it doesn't expect more tokens.
     fn yield_token<'b>(&mut self, token: Token<'b>) -> Result<bool, Self::Error>;
 
     fn expect_tokens(&mut self) -> Option<TokenTypes> {
         None
+    }
+}
+
+#[derive(Debug)]
+pub enum PrintError<DE: Error> {
+    Downstream(DE),
+    Print(std::io::Error),
+}
+
+impl<DE: Error> Error for PrintError<DE> {
+    fn invalid_token(token: Token<'_>, expected: Option<TokenTypes>) -> Self {
+        Self::Downstream(DE::invalid_token(token, expected))
+    }
+
+    fn unexpected_end(expected: Option<TokenTypes>) -> Self {
+        Self::Downstream(DE::unexpected_end(expected))
     }
 }
 
@@ -220,7 +274,7 @@ impl<'a, S: TokenSink, W: std::io::Write> PrintingTokenSink<'a, S, W> {
         Self(sink, prefix, w, 0)
     }
 
-    fn print_token(&mut self, token: &Token<'_>) {
+    fn print_token(&mut self, token: &Token<'_>) -> std::io::Result<()> {
         if token.is_end() {
             self.3 -= 1;
         }
@@ -232,22 +286,26 @@ impl<'a, S: TokenSink, W: std::io::Write> PrintingTokenSink<'a, S, W> {
             "",
             token,
             indent = 2 * self.3
-        )
-        .unwrap();
+        )?;
 
         if token.is_start() {
             self.3 += 1;
         }
+
+        Ok(())
     }
 }
 
 impl<'a, S: TokenSink, W: std::io::Write> TokenSink for PrintingTokenSink<'a, S, W> {
-    type Error = S::Error;
+    type Error = PrintError<S::Error>;
 
     fn yield_token<'b>(&mut self, token: Token<'b>) -> Result<bool, Self::Error> {
-        self.print_token(&token);
+        self.print_token(&token)
+            .map_err(|err| PrintError::Print(err))?;
 
-        self.0.yield_token(token)
+        self.0
+            .yield_token(token)
+            .map_err(|err| PrintError::Downstream(err))
     }
 
     fn expect_tokens(&mut self) -> Option<TokenTypes> {
@@ -256,47 +314,27 @@ impl<'a, S: TokenSink, W: std::io::Write> TokenSink for PrintingTokenSink<'a, S,
 }
 
 pub trait IntoTokens {
-    type Error;
-
-    fn into_tokens<S: TokenSink<Error = Self::Error>>(
-        &self,
-        sink: &mut S,
-    ) -> Result<(), Self::Error>;
+    fn into_tokens<S: TokenSink>(&self, sink: &mut S) -> Result<(), S::Error>;
 }
 
 impl IntoTokens for bool {
-    type Error = ();
-
-    fn into_tokens<S: TokenSink<Error = Self::Error>>(
-        &self,
-        sink: &mut S,
-    ) -> Result<(), Self::Error> {
+    fn into_tokens<S: TokenSink>(&self, sink: &mut S) -> Result<(), S::Error> {
         sink.yield_token(Token::Bool(*self)).map(|_| ())
     }
 }
 
 impl IntoTokens for u32 {
-    type Error = ();
-
-    fn into_tokens<S: TokenSink<Error = Self::Error>>(
-        &self,
-        sink: &mut S,
-    ) -> Result<(), Self::Error> {
+    fn into_tokens<S: TokenSink>(&self, sink: &mut S) -> Result<(), S::Error> {
         sink.yield_token(Token::U32(*self)).map(|_| ())
     }
 }
 
 impl<'a, K, V> IntoTokens for (K, V)
 where
-    K: IntoTokens<Error = ()>,
-    V: IntoTokens<Error = ()>,
+    K: IntoTokens,
+    V: IntoTokens,
 {
-    type Error = ();
-
-    fn into_tokens<S: TokenSink<Error = Self::Error>>(
-        &self,
-        sink: &mut S,
-    ) -> Result<(), Self::Error> {
+    fn into_tokens<S: TokenSink>(&self, sink: &mut S) -> Result<(), S::Error> {
         sink.yield_token(Token::Tuple(TupleMeta { size_hint: Some(2) }))?;
         self.0.into_tokens(sink)?;
         self.1.into_tokens(sink)?;
@@ -306,38 +344,28 @@ where
 
 impl<T> IntoTokens for [T]
 where
-    T: IntoTokens<Error = ()>,
+    T: IntoTokens,
 {
-    type Error = ();
-
-    fn into_tokens<S: TokenSink<Error = Self::Error>>(
-        &self,
-        sink: &mut S,
-    ) -> Result<(), Self::Error> {
+    fn into_tokens<S: TokenSink>(&self, sink: &mut S) -> Result<(), S::Error> {
         iter_into_tokens(self.iter(), sink).map(|_| ())
     }
 }
 
 impl<T> IntoTokens for Vec<T>
 where
-    T: IntoTokens<Error = ()>,
+    T: IntoTokens,
 {
-    type Error = ();
-
-    fn into_tokens<S: TokenSink<Error = Self::Error>>(
-        &self,
-        sink: &mut S,
-    ) -> Result<(), Self::Error> {
+    fn into_tokens<S: TokenSink>(&self, sink: &mut S) -> Result<(), S::Error> {
         iter_into_tokens(self.iter(), sink).map(|_| ())
     }
 }
 
-pub fn iter_into_tokens<'a, I: Iterator<Item = &'a T>, S: TokenSink<Error = E>, T, E>(
+pub fn iter_into_tokens<'a, I: Iterator<Item = &'a T>, S: TokenSink, T>(
     it: I,
     sink: &mut S,
-) -> Result<(), E>
+) -> Result<(), S::Error>
 where
-    T: 'a + IntoTokens<Error = E>,
+    T: 'a + IntoTokens,
 {
     let (_, size_hint) = it.size_hint();
     sink.yield_token(Token::Seq(SeqMeta { size_hint }))?;
@@ -348,32 +376,36 @@ where
 }
 
 pub trait FromTokenSink: Sized {
-    type Error;
-    type Sink: TokenSink<Error = Self::Error>;
+    /// The type of sink used to construct this type of value.
+    type Sink: TokenSink;
 
+    /// Creates a new sink to construct a value with.
     fn new_sink() -> Self::Sink;
+
+    /// Takes the constructed value from the sink. If it returns None,
+    /// the token stream ended unexpectedly.
     fn from_sink(sink: Self::Sink) -> Option<Self>;
 }
 
 pub trait FromTokens: FromTokenSink {
-    fn from_tokens<I: IntoTokens<Error = Self::Error>>(into: I) -> Result<Self, Self::Error>;
+    fn from_tokens<I: IntoTokens>(into: I) -> Result<Self, <Self::Sink as TokenSink>::Error>;
 }
 
-impl<T: FromTokenSink<Error = ()>> FromTokens for T {
-    fn from_tokens<I: IntoTokens<Error = Self::Error>>(into: I) -> Result<Self, Self::Error> {
+impl<T: FromTokenSink> FromTokens for T {
+    fn from_tokens<I: IntoTokens>(into: I) -> Result<Self, <Self::Sink as TokenSink>::Error> {
         let mut sink = Self::new_sink();
         into.into_tokens(&mut sink)?;
 
-        Self::from_sink(sink).ok_or(())
+        Self::from_sink(sink).ok_or(<Self::Sink as TokenSink>::Error::unexpected_end(None))
     }
 }
 
 pub struct BasicSink<T>(Option<T>);
 
 macro_rules! basic_from_tokens [
-    ($va:path => $ty:ty) => {
+    ($va:path, $tt:path => $ty:ty) => {
         impl TokenSink for BasicSink<$ty> {
-            type Error = ();
+            type Error = E;
 
             fn yield_token<'b>(&mut self, token: Token<'b>) -> Result<bool, Self::Error> {
                 match token {
@@ -381,13 +413,12 @@ macro_rules! basic_from_tokens [
                         self.0 = Some(v);
                         Ok(true)
                     }
-                    _ => Err(()),
+                    t => Err(Self::Error::invalid_token(t, Some(TokenTypes::new($tt)))),
                 }
             }
         }
 
         impl FromTokenSink for $ty {
-            type Error = ();
             type Sink = BasicSink<$ty>;
 
             fn new_sink() -> Self::Sink {
@@ -401,10 +432,10 @@ macro_rules! basic_from_tokens [
     }
 ];
 
-basic_from_tokens![Token::Bool => bool];
-basic_from_tokens![Token::U32 => u32];
+basic_from_tokens![Token::Bool, TokenType::Bool => bool];
+basic_from_tokens![Token::U32, TokenType::Bool => u32];
 
-pub struct VecSink<T: FromTokenSink<Error = ()>>(Vec<T>, VecSinkState, Option<T::Sink>);
+pub struct VecSink<T: FromTokenSink>(Vec<T>, VecSinkState, Option<T::Sink>);
 
 #[derive(Eq, PartialEq)]
 pub enum VecSinkState {
@@ -414,8 +445,8 @@ pub enum VecSinkState {
     End,
 }
 
-impl<T: FromTokenSink<Error = ()>> TokenSink for VecSink<T> {
-    type Error = ();
+impl<T: FromTokenSink> TokenSink for VecSink<T> {
+    type Error = <T::Sink as TokenSink>::Error;
 
     fn yield_token<'b>(&mut self, token: Token<'b>) -> Result<bool, Self::Error> {
         if let Some(sink) = &mut self.2 {
@@ -445,7 +476,7 @@ impl<T: FromTokenSink<Error = ()>> TokenSink for VecSink<T> {
 
                 Ok(true)
             }
-            t => {
+            t if !t.is_end() => {
                 self.2 = Some(T::new_sink());
                 if self.2.as_mut().unwrap().yield_token(t)? {
                     self.1 = VecSinkState::Elem;
@@ -456,6 +487,17 @@ impl<T: FromTokenSink<Error = ()>> TokenSink for VecSink<T> {
                 }
 
                 Ok(false)
+            }
+            t => {
+                self.2 = Some(T::new_sink());
+                Err(Self::Error::invalid_token(
+                    t,
+                    self.2
+                        .as_mut()
+                        .unwrap()
+                        .expect_tokens()
+                        .map(|tt| tt.with(TokenType::EndSeq)),
+                ))
             }
         }
     }
@@ -480,8 +522,7 @@ impl<T: FromTokenSink<Error = ()>> TokenSink for VecSink<T> {
     }
 }
 
-impl<T: FromTokenSink<Error = ()>> FromTokenSink for Vec<T> {
-    type Error = ();
+impl<T: FromTokenSink> FromTokenSink for Vec<T> {
     type Sink = VecSink<T>;
 
     fn new_sink() -> Self::Sink {
@@ -506,27 +547,22 @@ impl TokenVec {
     }
 
     pub fn from_iter<'a, I: Iterator<Item = &'a Token<'a>>>(it: I) -> Self {
-        TokenVec(it.map(|t| t.into()).collect())
+        TokenVec(it.map(|t| t.clone().into()).collect())
     }
 }
 
 impl TokenSink for TokenVec {
-    type Error = ();
+    type Error = NoError;
 
     fn yield_token<'b>(&mut self, token: Token<'b>) -> Result<bool, Self::Error> {
-        self.0.push((&token).into());
+        self.0.push(token.into());
 
         Ok(false)
     }
 }
 
 impl<'a> IntoTokens for TokenVec {
-    type Error = ();
-
-    fn into_tokens<S: TokenSink<Error = Self::Error>>(
-        &self,
-        sink: &mut S,
-    ) -> Result<(), Self::Error> {
+    fn into_tokens<S: TokenSink>(&self, sink: &mut S) -> Result<(), S::Error> {
         for token in self.0.iter() {
             sink.yield_token(token.into())?;
         }
@@ -624,6 +660,24 @@ mod tests {
         assert_eq!(
             Vec::<Vec<u32>>::from_tokens(tokens).unwrap(),
             vec![vec![42, 43]]
+        );
+    }
+
+    #[test]
+    fn test_from_end() {
+        let tokens = TokenVec(vec![]);
+        assert_eq!(
+            bool::from_tokens(tokens).unwrap_err(),
+            E::unexpected_end(None)
+        );
+    }
+
+    #[test]
+    fn test_bool_from_invalid() {
+        let tokens = TokenVec(vec![OwningToken::U32(42)]);
+        assert_eq!(
+            bool::from_tokens(tokens).unwrap_err(),
+            E::invalid_token(Token::U32(42), Some(TokenTypes::new(TokenType::Bool)))
         );
     }
 }
