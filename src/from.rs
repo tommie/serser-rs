@@ -93,11 +93,6 @@ impl<T: FromTokenSink> TokenSink for FromTokensSink<T> {
 
 pub struct BasicSink<T>(Option<T>);
 
-macro_rules! token_sink_for_basic_sink [
-    ($ty:ty, $va:path, $tt:path) => {
-    }
-];
-
 macro_rules! basic_from_tokens [
     ($va:path, $tt:path => $ty:ty) => {
         impl TokenSink for BasicSink<$ty> {
@@ -181,13 +176,7 @@ impl<T: FromTokenSink> TokenSink for VecSink<T> {
                     panic!("yield_token is expected to finish with a single token");
                 }
 
-                if let Some(v) = T::from_sink(sink) {
-                    if let Some(vec) = self.0.as_mut() {
-                        vec.push(v);
-                    } else {
-                        panic!("No Seq token before element");
-                    }
-                }
+                self.end(sink);
 
                 Ok(false)
             }
