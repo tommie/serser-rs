@@ -38,7 +38,7 @@ impl Into<Vec<OwningToken>> for TokenVec {
 }
 
 impl TokenSink for TokenVec {
-    type Error = NoError;
+    type Error = TokenError;
     type Subsink<'c> = TokenVec where Self: 'c;
 
     fn yield_start<'b, 'c>(&mut self, token: Token<'b>) -> Result<Self::Subsink<'c>, Self::Error>

@@ -13,22 +13,22 @@ pub trait Error: error::Error {
 }
 
 #[derive(Debug, Eq, PartialEq)]
-pub enum E {
+pub enum TokenError {
     InvalidToken(OwningToken, Option<TokenTypes>),
     UnexpectedEnd(Option<TokenTypes>),
 }
 
-impl Error for E {
+impl Error for TokenError {
     fn invalid_token(token: Token<'_>, expected: Option<TokenTypes>) -> Self {
-        E::InvalidToken(token.into(), expected)
+        TokenError::InvalidToken(token.into(), expected)
     }
 
     fn unexpected_end(expected: Option<TokenTypes>) -> Self {
-        E::UnexpectedEnd(expected)
+        TokenError::UnexpectedEnd(expected)
     }
 }
 
-impl fmt::Display for E {
+impl fmt::Display for TokenError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Self::InvalidToken(_, _) => write!(f, "invalid token"),
@@ -37,25 +37,4 @@ impl fmt::Display for E {
     }
 }
 
-impl std::error::Error for E {}
-
-#[derive(Debug)]
-pub struct NoError;
-
-impl Error for NoError {
-    fn invalid_token(_token: Token<'_>, _expected: Option<TokenTypes>) -> Self {
-        unreachable!()
-    }
-
-    fn unexpected_end(_expected: Option<TokenTypes>) -> Self {
-        unreachable!()
-    }
-}
-
-impl fmt::Display for NoError {
-    fn fmt(&self, _f: &mut fmt::Formatter) -> fmt::Result {
-        unreachable!()
-    }
-}
-
-impl std::error::Error for NoError {}
+impl std::error::Error for TokenError {}

@@ -96,7 +96,7 @@ pub struct BasicSink<T>(Option<T>);
 macro_rules! basic_from_tokens [
     ($va:path, $tt:path => $ty:ty) => {
         impl TokenSink for BasicSink<$ty> {
-            type Error = E;
+            type Error = TokenError;
             type Subsink<'c> = Self where Self: 'c;
 
             fn yield_start<'c, 'd>(&mut self, token: Token<'c>) -> Result<Self::Subsink<'d>, Self::Error> where Self: 'd {
@@ -263,7 +263,7 @@ mod tests {
         let tokens = TokenVec::from(vec![]);
         assert_eq!(
             bool::from_tokens(tokens).unwrap_err(),
-            E::unexpected_end(Some(TokenTypes::new(TokenType::Bool)))
+            TokenError::unexpected_end(Some(TokenTypes::new(TokenType::Bool)))
         );
     }
 
@@ -272,7 +272,7 @@ mod tests {
         let tokens = TokenVec::from(vec![OwningToken::U32(42)]);
         assert_eq!(
             bool::from_tokens(tokens).unwrap_err(),
-            E::invalid_token(Token::U32(42), Some(TokenTypes::new(TokenType::Bool)))
+            TokenError::invalid_token(Token::U32(42), Some(TokenTypes::new(TokenType::Bool)))
         );
     }
 }
