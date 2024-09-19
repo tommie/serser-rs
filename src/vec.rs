@@ -6,6 +6,7 @@ use crate::into::*;
 use crate::token::*;
 use crate::TokenSink;
 
+/// A vector of tokens, which can be used as a source or sink.
 #[derive(Debug, Eq, PartialEq)]
 pub struct TokenVec(Rc<RefCell<Vec<OwningToken>>>);
 

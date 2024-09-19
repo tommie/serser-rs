@@ -1,8 +1,12 @@
-use crate::meta::*;
 use crate::token::*;
 use crate::TokenSink;
 
+/// Provides a way to associate appropriate sources with Rust data types.
 pub trait IntoTokens {
+    /// Yields tokens to the sink, one by one. Any start token (see
+    /// [Token::is_start]) must be yielded using
+    /// [TokenSink::yield_start]. Other tokens use
+    /// [TokenSink::yield_token].
     fn into_tokens<S: TokenSink>(&self, sink: &mut S) -> Result<(), S::Error>;
 }
 
@@ -49,6 +53,7 @@ where
     }
 }
 
+/// Yields the contents of an iterator as a [Token::Seq].
 pub fn iter_into_tokens<'a, I: Iterator<Item = &'a T>, S: TokenSink, T>(
     it: I,
     sink: &mut S,

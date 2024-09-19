@@ -3,6 +3,11 @@ use crate::into::*;
 use crate::token::*;
 use crate::TokenSink;
 
+/// Provides a way to associate appropriate sinks with Rust data types.
+///
+/// The sinks are used as building blocks to construct Rust values. If
+/// you simply want to construct a Rust value, [FromTokens] is a
+/// higher-level interface.
 pub trait FromTokenSink: Sized {
     /// The type of sink used to construct this type of value.
     type Sink: TokenSink;
@@ -15,11 +20,24 @@ pub trait FromTokenSink: Sized {
     fn from_sink(sink: Self::Sink) -> Option<Self>;
 
     /// Returns the token types that a freshly created sink will
-    /// expect.
-    fn expect_initial() -> Option<TokenTypes>;
+    /// expect. The default implementation creates a new
+    /// sink. Implementations may want to optimize this if creating a
+    /// sink is expensive. See [TokenSink::expect_tokens].
+    fn expect_initial() -> Option<TokenTypes> {
+        Self::new_sink().expect_tokens()
+    }
 }
 
+/// Constructs a Rust value from a token source.
+///
+/// This is a convenience wrapper for sinking into a [FromTokenSink]
+/// that is appropriate for the data type, implemented for all types
+/// that have [FromTokenSink].
+///
+/// The primary use of this wrapper is to flatten the outer start/end
+/// tokens.
 pub trait FromTokens: FromTokenSink {
+    /// Constructs a Rust value from a token source.
     fn from_tokens<I: IntoTokens>(into: I) -> Result<Self, <Self::Sink as TokenSink>::Error>;
 }
 
@@ -130,10 +148,6 @@ macro_rules! basic_from_tokens [
             fn from_sink(sink: Self::Sink) -> Option<Self> {
                 sink.0
             }
-
-            fn expect_initial() -> Option<TokenTypes> {
-                Some(TokenTypes::new($tt))
-            }
         }
     }
 ];
@@ -214,16 +228,11 @@ impl<T: FromTokenSink> FromTokenSink for Vec<T> {
     fn from_sink(sink: Self::Sink) -> Option<Self> {
         sink.0
     }
-
-    fn expect_initial() -> Option<TokenTypes> {
-        Some(TokenTypes::new(TokenType::Seq))
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::meta::*;
     use crate::vec::*;
 
     #[test]

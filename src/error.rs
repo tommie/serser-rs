@@ -3,6 +3,11 @@ use std::fmt;
 
 use crate::token::*;
 
+/// Errors returned from [TokenSink](super::TokenSink) must implement this trait.
+///
+/// It allows the source and intermediary code to generate internal
+/// errors, while giving the sink implementor full control over the
+/// error type.
 pub trait Error: error::Error {
     /// The token sink received a token it cannot process.
     fn invalid_token(token: Token<'_>, expected: Option<TokenTypes>) -> Self;
@@ -12,6 +17,7 @@ pub trait Error: error::Error {
     fn unexpected_end(expected: Option<TokenTypes>) -> Self;
 }
 
+/// A simple [Error] implementation for when nothing special is needed.
 #[derive(Debug, Eq, PartialEq)]
 pub enum TokenError {
     InvalidToken(OwningToken, Option<TokenTypes>),
