@@ -57,11 +57,13 @@ where
     T: 'a + IntoTokens,
 {
     let (_, size_hint) = it.size_hint();
-    sink.yield_token(Token::Seq(SeqMeta { size_hint }))?;
+    let mut subsink = sink.yield_start(Token::Seq(SeqMeta { size_hint }))?;
     for elem in it {
-        elem.into_tokens(sink)?;
+        elem.into_tokens(&mut subsink)?;
     }
-    sink.yield_token(Token::EndSeq).map(|_| ())
+    subsink.yield_token(Token::EndSeq)?;
+
+    Ok(())
 }
 
 #[cfg(test)]

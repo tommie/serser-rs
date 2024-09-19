@@ -98,25 +98,32 @@ impl std::fmt::Debug for TokenTypes {
     }
 }
 
-impl<'a> Token<'a> {
-    pub fn is_start(&self) -> bool {
-        match self {
-            Self::Seq(_) => true,
-            Self::Tuple(_) => true,
-            Self::Struct(_) => true,
-            _ => false,
-        }
-    }
+macro_rules! token_is [
+    ($ty:ty) => {
+        impl<'a> $ty {
+            pub fn is_start(&self) -> bool {
+                match self {
+                    Self::Seq(_) => true,
+                    Self::Tuple(_) => true,
+                    Self::Struct(_) => true,
+                    _ => false,
+                }
+            }
 
-    pub fn is_end(&self) -> bool {
-        match self {
-            Self::EndSeq => true,
-            Self::EndTuple => true,
-            Self::EndStruct => true,
-            _ => false,
+            pub fn is_end(&self) -> bool {
+                match self {
+                    Self::EndSeq => true,
+                    Self::EndTuple => true,
+                    Self::EndStruct => true,
+                    _ => false,
+                }
+            }
         }
     }
-}
+];
+
+token_is![Token<'a>];
+token_is![OwningToken];
 
 impl<'a> From<Token<'a>> for OwningToken {
     fn from(v: Token<'a>) -> Self {
