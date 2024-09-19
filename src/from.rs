@@ -157,15 +157,13 @@ impl<T: FromTokenSink> TokenSink for VecSink<T> {
         Self: 'd,
     {
         let mut sink = T::new_sink();
-        println!("vec yield_start {:?}", &token);
         if sink.yield_token(token)? {
-            println!("yield_token is expected to require an end token");
+            panic!("yield_token is expected to require an end token");
         }
         Ok(sink)
     }
 
     fn yield_token<'b>(&mut self, token: Token<'b>) -> Result<bool, Self::Error> {
-        println!("vec yield_token {:?}", &token);
         match token {
             Token::Seq(meta) => {
                 if let Some(size) = meta.size_hint {
