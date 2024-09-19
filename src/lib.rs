@@ -1,13 +1,42 @@
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum TokenType {
-    Bool,
-    U32,
-    Seq,
+macro_rules! define_tokens {
+    ($($id:ident $(=> $ref:tt => $own:tt)?),*$(,)?) => {
+        #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+        pub enum TokenType {
+            $($id),*
+        }
+
+        #[derive(Clone, Debug, Eq, PartialEq)]
+        pub enum Token<'a> {
+            $($id $($ref)?),*
+        }
+
+        #[derive(Debug, Eq, PartialEq)]
+        pub enum OwningToken {
+            $($id $($own)?),*
+        }
+
+        impl TryFrom<u64> for TokenType {
+            type Error = ();
+
+            fn try_from(i: u64) -> Result<Self, Self::Error> {
+                Ok(match i {
+                    $(x if x == TokenType::$id as u64 => Self::$id,)*
+                    _ => return Err(()),
+                })
+            }
+        }
+    }
+}
+
+define_tokens! {
+    Bool       => (bool)           => (bool),
+    U32        => (u32)            => (u32),
+    Seq        => (SeqMeta)        => (SeqMeta),
     EndSeq,
-    Tuple,
+    Tuple      => (TupleMeta)      => (TupleMeta),
     EndTuple,
-    Struct,
-    Field,
+    Struct     => (StructMeta<'a>) => (OwningStructMeta),
+    Field      => (&'a str)        => (String),
     EndStruct,
 }
 
@@ -63,36 +92,12 @@ impl std::fmt::Debug for TokenTypes {
             write!(
                 f,
                 "{:?}",
-                match i {
-                    x if x == TokenType::Bool as u64 => TokenType::Bool,
-                    x if x == TokenType::U32 as u64 => TokenType::U32,
-                    x if x == TokenType::Seq as u64 => TokenType::Seq,
-                    x if x == TokenType::EndSeq as u64 => TokenType::EndSeq,
-                    x if x == TokenType::Tuple as u64 => TokenType::Tuple,
-                    x if x == TokenType::EndTuple as u64 => TokenType::EndTuple,
-                    x if x == TokenType::Struct as u64 => TokenType::Struct,
-                    x if x == TokenType::Field as u64 => TokenType::Field,
-                    x if x == TokenType::EndStruct as u64 => TokenType::EndStruct,
-                    _ => unreachable!(),
-                }
+                TokenType::try_from(i).unwrap()
             )?;
         }
 
         Ok(())
     }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum Token<'a> {
-    Bool(bool),
-    U32(u32),
-    Seq(SeqMeta),
-    EndSeq,
-    Tuple(TupleMeta),
-    EndTuple,
-    Struct(StructMeta<'a>),
-    Field(&'a str),
-    EndStruct,
 }
 
 impl<'a> Token<'a> {
@@ -113,19 +118,6 @@ impl<'a> Token<'a> {
             _ => false,
         }
     }
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub enum OwningToken {
-    Bool(bool),
-    U32(u32),
-    Seq(SeqMeta),
-    EndSeq,
-    Tuple(TupleMeta),
-    EndTuple,
-    Struct(OwningStructMeta),
-    Field(String),
-    EndStruct,
 }
 
 impl<'a> From<Token<'a>> for OwningToken {
