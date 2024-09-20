@@ -24,6 +24,7 @@ macro_rules! define_tokens {
         /// This table lists the nested elements. An element is either
         /// one simple token, or a nested start/end pair.
         ///
+        /// * [Enum](Token::Enum): First is a [Token::Variant], then elements of data.
         /// * [Seq](Token::Seq): Each element is one token.
         /// * [Tuple](Token::Tuple): Each element is one token.
         /// * [Struct](Token::Struct): Each field is one [Token::Field] and one value token, in that order.
