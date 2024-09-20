@@ -15,7 +15,7 @@ impl TokenVec {
         TokenVec(Rc::new(RefCell::new(Vec::new())))
     }
 
-    pub fn from_iter<'b, I: Iterator<Item = &'b Token<'b>>>(it: I) -> Self {
+    pub fn from_iter<'b, I: Iterator<Item = Token<'b>>>(it: I) -> Self {
         TokenVec(Rc::new(RefCell::new(
             it.map(|t| t.clone().into()).collect(),
         )))
