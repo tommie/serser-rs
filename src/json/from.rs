@@ -399,7 +399,7 @@ fn parse_in_null<'b, S: TokenSink>(
 
         match tt {
             TokenType::Unit => {
-                sink.yield_token(Token::Unit(()))
+                sink.yield_token(Token::Unit)
                     .map_err(|err| Error::Sink(err))?;
             }
             TokenType::Seq => {
@@ -457,7 +457,7 @@ mod tests {
         for (json, want) in cases {
             let mut got = TokenVec::new();
             json_into_tokens(&mut got, json).unwrap();
-            assert_eq!(got.into_vec(), vec![OwningToken::Unit(want)]);
+            assert_eq!(got.into_vec(), vec![OwningToken::Unit]);
         }
     }
 
@@ -562,7 +562,7 @@ mod tests {
                 vec![
                     start(),
                     OwningToken::Bool(false),
-                    OwningToken::Unit(()),
+                    OwningToken::Unit,
                     OwningToken::F64(42.0),
                     end(),
                 ],

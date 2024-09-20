@@ -54,7 +54,7 @@ macro_rules! define_tokens {
 }
 
 define_tokens! {
-    Unit       => (())             => (()),
+    Unit,
     Bool       => (bool)           => (bool),
     U8         => (u8)             => (u8),
     U16        => (u16)            => (u16),
@@ -223,7 +223,7 @@ token_is![OwningToken];
 impl<'a> From<Token<'a>> for OwningToken {
     fn from(v: Token<'a>) -> Self {
         match v {
-            Token::Unit(()) => Self::Unit(()),
+            Token::Unit => Self::Unit,
             Token::Bool(v) => Self::Bool(v),
             Token::U8(v) => Self::U8(v),
             Token::U16(v) => Self::U16(v),
@@ -257,7 +257,7 @@ impl<'a> From<Token<'a>> for OwningToken {
 impl<'a> From<&'a OwningToken> for Token<'a> {
     fn from(v: &'a OwningToken) -> Self {
         match v {
-            OwningToken::Unit(()) => Self::Unit(()),
+            OwningToken::Unit => Self::Unit,
             OwningToken::Bool(v) => Self::Bool(*v),
             OwningToken::U8(v) => Self::U8(*v),
             OwningToken::U16(v) => Self::U16(*v),
