@@ -179,12 +179,13 @@ impl Iterator for TypeIter {
 
     fn next(&mut self) -> Option<Self::Item> {
         while self.1 < 64 {
-            let tt = TokenType::try_from(self.1 as u64).unwrap();
-            if self.0.contains(tt) {
-                return Some(tt);
-            }
-
+            let tt = TokenType::try_from(self.1 as u64);
             self.1 += 1;
+            if let Ok(tt) = tt {
+                if self.0.contains(tt) {
+                    return Some(tt);
+                }
+            }
         }
 
         None
