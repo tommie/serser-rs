@@ -74,6 +74,7 @@ define_tokens! {
     F32        => (f32)             => (f32),
     F64        => (f64)             => (f64),
     Char       => (char)            => (char),
+    Bytes      => (&'a [u8])        => (Vec<u8>),
     Str        => (&'a str)         => (String),
 
     Seq        => (SeqMeta)         => (SeqMeta),
@@ -249,6 +250,7 @@ impl<'a> From<Token<'a>> for OwningToken {
             Token::F32(v) => Self::F32(v),
             Token::F64(v) => Self::F64(v),
             Token::Char(v) => Self::Char(v),
+            Token::Bytes(v) => Self::Bytes(v.to_owned()),
             Token::Str(v) => Self::Str(v.to_owned()),
 
             Token::Seq(meta) => Self::Seq(meta.clone()),
@@ -286,6 +288,7 @@ impl<'a> From<&'a OwningToken> for Token<'a> {
             OwningToken::F32(v) => Self::F32(*v),
             OwningToken::F64(v) => Self::F64(*v),
             OwningToken::Char(v) => Self::Char(*v),
+            OwningToken::Bytes(v) => Self::Bytes(v.as_slice()),
             OwningToken::Str(v) => Self::Str(v.as_str()),
 
             OwningToken::Seq(meta) => Self::Seq(meta.clone()),

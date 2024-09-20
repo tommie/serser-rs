@@ -40,6 +40,7 @@ basic_into_tokens![
     F32 => f32,
     F64 => f64,
     Char => char,
+    Bytes => &'_ [u8],
     Str => &'_ str,
 ];
 

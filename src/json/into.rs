@@ -2,6 +2,8 @@ use std::cell::RefCell;
 use std::fmt;
 use std::rc::Rc;
 
+use base64::prelude::*;
+
 use crate::token::*;
 use crate::Error;
 use crate::IntoTokens;
@@ -108,6 +110,14 @@ impl<W: fmt::Write> JsonTokenSink<W> {
             JsonState::EnumElement => w.write_str(",").map_err(|err| WriteError::Fmt(err))?,
             JsonState::Done => unreachable!(),
         }
+
+        Ok(())
+    }
+
+    fn write_bytes(w: &mut W, v: &[u8]) -> Result<(), fmt::Error> {
+        w.write_char('"')?;
+        w.write_str(BASE64_STANDARD.encode(v).as_str())?;
+        w.write_char('"')?;
 
         Ok(())
     }
@@ -232,6 +242,7 @@ impl<W: fmt::Write> TokenSink for JsonTokenSink<W> {
             Token::F32(v) => write!(w, "{}", v),
             Token::F64(v) => write!(w, "{}", v),
             Token::Char(v) => Self::write_str(&mut w, v.to_string().as_str()),
+            Token::Bytes(v) => Self::write_bytes(&mut w, v),
             Token::Str(s) => Self::write_str(&mut w, s),
             Token::Field(s) => Self::write_str(&mut w, s),
             Token::Variant(EnumVariant::Str(s)) => {
@@ -314,6 +325,8 @@ mod tests {
             (Token::I128(42), "42"),
             (Token::Isize(42), "42"),
             (Token::Char('a'), "\"a\""),
+            (Token::Bytes(b""), "\"\""),
+            (Token::Bytes(b"\x00"), "\"AA==\""),
             (Token::Str("hello"), "\"hello\""),
             (Token::Str("\n"), "\"\\n\""),
             (Token::Str("❤️"), "\"❤️\""),

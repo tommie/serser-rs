@@ -18,4 +18,5 @@ license.workspace = true
 readme.workspace = true
 
 [dependencies]
+base64 = "0.22.1"
 serser_derive = { version = "0.1.0", path = "serser_derive" }

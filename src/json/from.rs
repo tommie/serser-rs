@@ -1,5 +1,7 @@
 use std::str::FromStr;
 
+use base64::prelude::*;
+
 use crate::token::*;
 use crate::TokenSink;
 
@@ -17,6 +19,9 @@ pub enum ParseError<E: crate::error::Error> {
 
     /// Something that looked like a number couldn't be parsed as one.
     ParseFloat(std::num::ParseFloatError),
+
+    /// A bytes string could not be decoded.
+    Base64(base64::DecodeError),
 }
 
 /// Parses a JSON string into a token sink.
@@ -79,7 +84,7 @@ fn parse_any<'b, S: TokenSink>(
 
                 return Ok(json);
             }
-            Some('"') => return parse_in_string(sink, &json[1..], |s| Token::Str(s)),
+            Some('"') => return parse_in_string(sink, &json[1..], TokenType::Str),
             Some(c) if c == '-' || c.is_digit(10) => return parse_number(sink, json),
             Some('f') => return parse_in_false(sink, &json[1..]),
             Some('t') => return parse_in_true(sink, &json[1..]),
@@ -138,7 +143,7 @@ fn parse_in_enum_object<'b, S: TokenSink>(
         json = &json[1..];
     }
 
-    json = parse_in_string(sink, json, |s| Token::Variant(EnumVariant::Str(s)))?;
+    json = parse_in_string(sink, json, TokenType::Variant)?;
 
     loop {
         match json.chars().next() {
@@ -220,7 +225,7 @@ fn parse_in_object<'b, S: TokenSink>(
             json = &json[1..];
         }
 
-        json = parse_in_string(sink, json, |s| Token::Field(s))?;
+        json = parse_in_string(sink, json, TokenType::Field)?;
 
         loop {
             match json.chars().next() {
@@ -314,7 +319,7 @@ fn parse_in_array<'b, S: TokenSink>(
 fn parse_in_string<'b, S: TokenSink>(
     sink: &mut S,
     json: &'b str,
-    to_token: impl for<'c> FnOnce(&'c str) -> Token<'c>,
+    default_type: TokenType,
 ) -> Result<&'b str, ParseError<S::Error>> {
     let mut n = 0;
     let mut esc_n = 0; // -1 means single character.
@@ -351,9 +356,21 @@ fn parse_in_string<'b, S: TokenSink>(
             }
             '"' => {
                 n += c.len_utf8();
-                let token = as_str_token(out.as_str(), sink.expect_tokens(), to_token);
-                sink.yield_token(token)
-                    .map_err(|err| ParseError::Sink(err))?;
+                match str_token_type(sink.expect_tokens(), default_type) {
+                    TokenType::Str => sink.yield_token(Token::Str(out.as_str())),
+                    TokenType::Field => sink.yield_token(Token::Field(out.as_str())),
+                    TokenType::Variant => {
+                        sink.yield_token(Token::Variant(EnumVariant::Str(out.as_str())))
+                    }
+                    TokenType::Bytes => sink.yield_token(Token::Bytes(
+                        BASE64_STANDARD
+                            .decode(out.as_bytes())
+                            .map_err(|err| ParseError::Base64(err))?
+                            .as_slice(),
+                    )),
+                    _ => unreachable!(),
+                }
+                .map_err(|err| ParseError::Sink(err))?;
 
                 return Ok(&json[n..]);
             }
@@ -371,25 +388,24 @@ fn parse_in_string<'b, S: TokenSink>(
     Err(ParseError::UnexpectedEnd)
 }
 
-fn as_str_token<'b>(
-    v: &'b str,
-    expected: Option<TokenTypes>,
-    to_token: impl for<'c> FnOnce(&'c str) -> Token<'c>,
-) -> Token<'b> {
+fn str_token_type(expected: Option<TokenTypes>, default_type: TokenType) -> TokenType {
     if let Some(tts) = expected {
-        if !tts.contains(TokenType::Str) {
-            for tt in tts.iter() {
-                match tt {
-                    TokenType::Str => return Token::Str(v),
-                    TokenType::Field => return Token::Field(v),
-                    TokenType::Variant => return Token::Variant(EnumVariant::Str(v)),
-                    _ => {}
-                }
-            }
+        if tts.contains(default_type) {
+            default_type
+        } else if tts.contains(TokenType::Str) {
+            TokenType::Str
+        } else if tts.contains(TokenType::Field) {
+            TokenType::Field
+        } else if tts.contains(TokenType::Variant) {
+            TokenType::Variant
+        } else if tts.contains(TokenType::Bytes) {
+            TokenType::Bytes
+        } else {
+            default_type
         }
+    } else {
+        default_type
     }
-
-    to_token(v)
 }
 
 fn parse_number<'b, S: TokenSink>(
@@ -621,6 +637,19 @@ mod tests {
             let mut got = TokenVec::new();
             json_into_tokens(&mut got, json).unwrap();
             assert_eq!(got.into_vec(), vec![OwningToken::Str(want.to_owned())]);
+        }
+    }
+
+    #[test]
+    fn test_json_into_tokens_bytes() {
+        let cases = vec![(r#""""#, b"".as_slice()), (r#""AA==""#, b"\x00".as_slice())];
+
+        for (json, want) in cases {
+            let mut got = TokenVec::new();
+            let mut expsink =
+                ExpectingTokenSink::new(&mut got, |_| Some(TokenTypes::new(TokenType::Bytes)));
+            json_into_tokens(&mut expsink, json).unwrap();
+            assert_eq!(got.into_vec(), vec![OwningToken::Bytes(want.to_owned())]);
         }
     }
 
