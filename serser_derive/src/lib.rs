@@ -1,9 +1,12 @@
 extern crate proc_macro;
 use proc_macro::TokenStream;
 
+use quote::format_ident;
 use quote::quote;
 use syn::{parse_macro_input, DeriveInput, Error};
 
+/// Provides the [IntoTokens] trait for a struct or enum. This is used
+/// to serialize Rust data.
 #[proc_macro_derive(IntoTokens)]
 pub fn derive_into_tokens(tokens: TokenStream) -> TokenStream {
     let input = parse_macro_input!(tokens as DeriveInput);
@@ -17,8 +20,11 @@ pub fn derive_into_tokens(tokens: TokenStream) -> TokenStream {
 fn into_tokens(input: &DeriveInput) -> Result<TokenStream, Error> {
     match &input.data {
         syn::Data::Struct(data) => into_tokens_struct(data, input),
-        syn::Data::Enum(_data) => todo!(),
-        syn::Data::Union(_data) => todo!(),
+        syn::Data::Enum(data) => into_tokens_enum(data, input),
+        syn::Data::Union(_data) => Err(Error::new_spanned(
+            input,
+            "union is not supported by IntoTokens",
+        )),
     }
 }
 
@@ -120,4 +126,99 @@ fn yield_field(field: &syn::Field) -> Result<proc_macro2::TokenStream, Error> {
         subsink.yield_token(::serser::token::Token::Field(#name_str))?;
         self.#ident.into_tokens(&mut subsink)?;
     })
+}
+
+fn into_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenStream, Error> {
+    let generics_params = &input.generics.params;
+    let where_clause = &input.generics.where_clause;
+    let ident = &input.ident;
+    let variants = data
+        .variants
+        .iter()
+        .map(|variant| {
+            syn::LitStr::new(
+                format!("{}", variant.ident).as_str(),
+                proc_macro2::Span::call_site(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let variant_names = data.variants.iter().map(|variant| {
+        let ident = &variant.ident;
+        let name_str = syn::LitStr::new(
+            format!("{}", ident).as_str(),
+            proc_macro2::Span::call_site(),
+        );
+        let fields = if let syn::Fields::Unnamed(fields) = &variant.fields {
+            fields
+                .unnamed
+                .iter()
+                .map(|_| format_ident!("_"))
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        let captures = if fields.is_empty() {
+            quote! {}
+        } else {
+            quote! { (#(#fields),*) }
+        };
+
+        quote! { Self::#ident #captures => #name_str, }
+    });
+    let yield_fields = data
+        .variants
+        .iter()
+        .map(|variant| {
+            let ident = &variant.ident;
+            let fields = if let syn::Fields::Unnamed(fields) = &variant.fields {
+                fields
+                    .unnamed
+                    .iter()
+                    .enumerate()
+                    .map(|(i, _)| format_ident!("f{}", i))
+                    .collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
+            let captures = if fields.is_empty() {
+                quote! {}
+            } else {
+                quote! { (#(#fields),*) }
+            };
+            let yields = fields
+                .iter()
+                .map(|ident| quote! { #ident.into_tokens(&mut subsink)?; })
+                .collect::<Vec<_>>();
+
+            quote! {
+                Self::#ident #captures => {
+                    #(#yields)*
+                }
+            }
+        })
+        .collect::<Vec<_>>();
+
+    Ok(quote! {
+        impl<#generics_params> ::serser::IntoTokens for #ident<#generics_params> #where_clause {
+            fn into_tokens<S: ::serser::TokenSink>(&self, sink: &mut S) -> Result<(), S::Error> {
+                use ::serser::IntoTokens;
+
+                let mut subsink = sink.yield_start(::serser::token::Token::Enum(EnumMeta { variants: Some(&[#(::serser::token::EnumVariant::Str(#variants)),*]) }))?;
+
+                subsink.yield_token(::serser::token::Token::Variant(::serser::token::EnumVariant::Str(match self {
+                    #(#variant_names)*
+                })))?;
+
+                match self {
+                    #(#yield_fields)*
+                }
+
+                subsink.yield_token(::serser::token::Token::EndEnum)?;
+                sink.end(subsink);
+
+                Ok(())
+            }
+        }
+    }
+    .into())
 }
