@@ -38,10 +38,7 @@ fn parse_any<'b, S: TokenSink>(
             Some('\r') => {}
             Some('{') => {
                 let mut subsink = sink
-                    .yield_start(Token::Struct(StructMeta {
-                        size_hint: None,
-                        fields: None,
-                    }))
+                    .yield_start(Token::Struct(StructMeta { fields: None }))
                     .map_err(|err| ParseError::Sink(err))?;
 
                 json = parse_in_object(&mut subsink, &json[1..])?;
@@ -412,10 +409,7 @@ fn parse_in_null<'b, S: TokenSink>(
             }
             TokenType::Struct => {
                 let subsink = sink
-                    .yield_start(Token::Struct(StructMeta {
-                        size_hint: None,
-                        fields: None,
-                    }))
+                    .yield_start(Token::Struct(StructMeta { fields: None }))
                     .map_err(|err| ParseError::Sink(err))?;
                 sink.end(subsink);
             }
@@ -581,10 +575,7 @@ mod tests {
     #[test]
     fn test_json_into_tokens_object() {
         let start = || {
-            OwningToken::Struct(OwningStructMeta {
-                size_hint: None,
-                fields: None,
-            })
+            OwningToken::Struct(OwningStructMeta { fields: None })
         };
         let end = || OwningToken::EndStruct;
         let cases = vec![

@@ -393,20 +393,14 @@ mod tests {
         let cases = vec![
             (
                 vec![
-                    Token::Struct(StructMeta {
-                        size_hint: None,
-                        fields: None,
-                    }),
+                    Token::Struct(StructMeta { fields: None }),
                     Token::EndStruct,
                 ],
                 "{}",
             ),
             (
                 vec![
-                    Token::Struct(StructMeta {
-                        size_hint: None,
-                        fields: None,
-                    }),
+                    Token::Struct(StructMeta { fields: None }),
                     Token::Field("akey"),
                     Token::Bool(true),
                     Token::EndStruct,
@@ -415,10 +409,7 @@ mod tests {
             ),
             (
                 vec![
-                    Token::Struct(StructMeta {
-                        size_hint: None,
-                        fields: None,
-                    }),
+                    Token::Struct(StructMeta { fields: None }),
                     Token::Field("akey"),
                     Token::Bool(true),
                     Token::Field("bkey"),
@@ -429,15 +420,9 @@ mod tests {
             ),
             (
                 vec![
-                    Token::Struct(StructMeta {
-                        size_hint: None,
-                        fields: None,
-                    }),
+                    Token::Struct(StructMeta { fields: None }),
                     Token::Field("akey"),
-                    Token::Struct(StructMeta {
-                        size_hint: None,
-                        fields: None,
-                    }),
+                    Token::Struct(StructMeta { fields: None }),
                     Token::Field("bkey"),
                     Token::Bool(false),
                     Token::EndStruct,

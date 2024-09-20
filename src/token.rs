@@ -302,21 +302,18 @@ pub struct TupleMeta {
 /// Metadata about a structure of named fields.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StructMeta<'a> {
-    pub size_hint: Option<usize>,
     pub fields: Option<&'a [&'a str]>,
 }
 
 /// Metadata (owned variant) about a structure of named fields.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OwningStructMeta {
-    pub size_hint: Option<usize>,
     pub fields: Option<Vec<String>>,
 }
 
 impl<'a> From<StructMeta<'a>> for OwningStructMeta {
     fn from(v: StructMeta<'a>) -> Self {
         Self {
-            size_hint: v.size_hint,
             fields: v
                 .fields
                 .map(|fields| fields.into_iter().map(|k| (*k).to_owned()).collect()),
@@ -325,9 +322,8 @@ impl<'a> From<StructMeta<'a>> for OwningStructMeta {
 }
 
 impl<'a> From<&'a OwningStructMeta> for StructMeta<'a> {
-    fn from(v: &'a OwningStructMeta) -> Self {
+    fn from(_v: &'a OwningStructMeta) -> Self {
         Self {
-            size_hint: v.size_hint,
             fields: None, // TODO
         }
     }
