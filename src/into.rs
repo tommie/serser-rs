@@ -10,15 +10,42 @@ pub trait IntoTokens {
     fn into_tokens<S: TokenSink>(&self, sink: &mut S) -> Result<(), S::Error>;
 }
 
-impl IntoTokens for bool {
-    fn into_tokens<S: TokenSink>(&self, sink: &mut S) -> Result<(), S::Error> {
-        sink.yield_token(Token::Bool(*self)).map(|_| ())
-    }
-}
+macro_rules! basic_into_tokens [
+    ($($id:ident => $ty:ty),*$(,)?) => {
+        $(impl IntoTokens for $ty {
+            fn into_tokens<S: TokenSink>(&self, sink: &mut S) -> Result<(), S::Error> {
+                sink.yield_token(Token::$id(*self)).map(|_| ())
+            }
+        })*
+    };
+];
 
-impl IntoTokens for u32 {
+basic_into_tokens![
+    Bool => bool,
+
+    U8 => u8,
+    U16 => u16,
+    U32 => u32,
+    U64 => u64,
+    U128 => u128,
+    Usize => usize,
+
+    I8 => i8,
+    I16 => i16,
+    I32 => i32,
+    I64 => i64,
+    I128 => i128,
+    Isize => isize,
+
+    F32 => f32,
+    F64 => f64,
+    Char => char,
+    Str => &'_ str,
+];
+
+impl IntoTokens for () {
     fn into_tokens<S: TokenSink>(&self, sink: &mut S) -> Result<(), S::Error> {
-        sink.yield_token(Token::U32(*self)).map(|_| ())
+        sink.yield_token(Token::Unit).map(|_| ())
     }
 }
 
