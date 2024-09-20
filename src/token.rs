@@ -4,6 +4,8 @@
 //! uses start/end pairs, and may use special tokens in-between,
 //! e.g. for a struct field name.
 
+use std::convert::TryFrom;
+
 macro_rules! define_tokens {
     ($($id:ident $(=> $ref:tt => $own:tt)?),*$(,)?) => {
         /// The type of a token, excluding any value or metadata.

@@ -1,6 +1,21 @@
+[workspace]
+members = ["serser_derive"]
+
+[workspace.package]
+edition = "2021"
+authors = ["Tommie Gannert"]
+repository = "https://github.com/tommie/serser-rs"
+license = "MIT"
+readme = "README.md"
+
 [package]
 name = "serser"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+license.workspace = true
+readme.workspace = true
 
 [dependencies]
+serser_derive = { version = "0.1.0", path = "serser_derive" }

@@ -38,6 +38,10 @@
 
 use crate::token::*;
 
+pub mod derive {
+    pub use serser_derive::IntoTokens;
+}
+
 mod error;
 pub use error::Error;
 pub use error::TokenError;
