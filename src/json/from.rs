@@ -454,9 +454,9 @@ mod tests {
 
     #[test]
     fn test_json_into_tokens_null() {
-        let cases = vec![("null", ()), (" null", ())];
+        let cases = vec!["null", " null"];
 
-        for (json, want) in cases {
+        for json in cases {
             let mut got = TokenVec::new();
             json_into_tokens(&mut got, json).unwrap();
             assert_eq!(got.into_vec(), vec![OwningToken::Unit]);
