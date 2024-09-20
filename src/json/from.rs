@@ -377,7 +377,7 @@ fn as_str_token<'b>(
     to_token: impl for<'c> FnOnce(&'c str) -> Token<'c>,
 ) -> Token<'b> {
     if let Some(tts) = expected {
-        if !tts.contains(TokenType::F64) {
+        if !tts.contains(TokenType::Str) {
             for tt in tts.iter() {
                 match tt {
                     TokenType::Str => return Token::Str(v),
