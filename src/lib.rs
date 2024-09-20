@@ -50,6 +50,8 @@ mod into;
 pub use into::IntoTokens;
 pub use into::iter_into_tokens;
 
+pub mod json;
+
 pub mod token;
 
 mod printsink;
