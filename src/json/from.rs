@@ -5,7 +5,7 @@ use crate::TokenSink;
 
 /// The error returned from [json_into_tokens].
 #[derive(Debug, Eq, PartialEq)]
-pub enum Error<E: crate::error::Error> {
+pub enum ParseError<E: crate::error::Error> {
     /// An error returned by the [TokenSink].
     Sink(E),
 
@@ -20,7 +20,7 @@ pub enum Error<E: crate::error::Error> {
 }
 
 /// Parses a JSON string into a token sink.
-pub fn json_into_tokens<S: TokenSink>(sink: &mut S, json: &str) -> Result<(), Error<S::Error>> {
+pub fn json_into_tokens<S: TokenSink>(sink: &mut S, json: &str) -> Result<(), ParseError<S::Error>> {
     parse_any(sink, json)?;
 
     Ok(())
@@ -29,7 +29,7 @@ pub fn json_into_tokens<S: TokenSink>(sink: &mut S, json: &str) -> Result<(), Er
 fn parse_any<'b, S: TokenSink>(
     sink: &mut S,
     mut json: &'b str,
-) -> Result<&'b str, Error<S::Error>> {
+) -> Result<&'b str, ParseError<S::Error>> {
     loop {
         match json.chars().next() {
             Some(' ') => {}
@@ -42,22 +42,22 @@ fn parse_any<'b, S: TokenSink>(
                         size_hint: None,
                         fields: None,
                     }))
-                    .map_err(|err| Error::Sink(err))?;
+                    .map_err(|err| ParseError::Sink(err))?;
 
                 json = parse_in_object(&mut subsink, &json[1..])?;
                 subsink
                     .yield_token(Token::EndStruct)
-                    .map_err(|err| Error::Sink(err))?;
+                    .map_err(|err| ParseError::Sink(err))?;
                 sink.end(subsink);
 
                 return Ok(json);
             }
             Some('[') => {
                 let (start, end) = tokens_for_array(sink.expect_tokens());
-                let mut subsink = sink.yield_start(start).map_err(|err| Error::Sink(err))?;
+                let mut subsink = sink.yield_start(start).map_err(|err| ParseError::Sink(err))?;
 
                 json = parse_in_array(&mut subsink, &json[1..])?;
-                subsink.yield_token(end).map_err(|err| Error::Sink(err))?;
+                subsink.yield_token(end).map_err(|err| ParseError::Sink(err))?;
                 sink.end(subsink);
 
                 return Ok(json);
@@ -67,7 +67,7 @@ fn parse_any<'b, S: TokenSink>(
             Some('f') => return parse_in_false(sink, &json[1..]),
             Some('t') => return parse_in_true(sink, &json[1..]),
             Some('n') => return parse_in_null(sink, &json[1..]),
-            Some(c) => return Err(Error::UnexpectedChar(c)),
+            Some(c) => return Err(ParseError::UnexpectedChar(c)),
             None => return Ok(json),
         }
 
@@ -95,11 +95,11 @@ fn tokens_for_array<'b>(expected: Option<TokenTypes>) -> (Token<'b>, Token<'b>) 
 fn parse_in_object<'b, S: TokenSink>(
     sink: &mut S,
     mut json: &'b str,
-) -> Result<&'b str, Error<S::Error>> {
+) -> Result<&'b str, ParseError<S::Error>> {
     loop {
         loop {
             match json.chars().next() {
-                None => return Err(Error::UnexpectedEnd),
+                None => return Err(ParseError::UnexpectedEnd),
                 Some(' ') => {}
                 Some('\t') => {}
                 Some('\n') => {}
@@ -112,7 +112,7 @@ fn parse_in_object<'b, S: TokenSink>(
                     json = &json[1..];
                     break;
                 }
-                Some(c) => return Err(Error::UnexpectedChar(c)),
+                Some(c) => return Err(ParseError::UnexpectedChar(c)),
             }
 
             json = &json[1..];
@@ -122,7 +122,7 @@ fn parse_in_object<'b, S: TokenSink>(
 
         loop {
             match json.chars().next() {
-                None => return Err(Error::UnexpectedEnd),
+                None => return Err(ParseError::UnexpectedEnd),
                 Some(' ') => {}
                 Some('\t') => {}
                 Some('\n') => {}
@@ -131,7 +131,7 @@ fn parse_in_object<'b, S: TokenSink>(
                     json = &json[1..];
                     break;
                 }
-                Some(c) => return Err(Error::UnexpectedChar(c)),
+                Some(c) => return Err(ParseError::UnexpectedChar(c)),
             }
 
             json = &json[1..];
@@ -141,7 +141,7 @@ fn parse_in_object<'b, S: TokenSink>(
 
         loop {
             match json.chars().next() {
-                None => return Err(Error::UnexpectedEnd),
+                None => return Err(ParseError::UnexpectedEnd),
                 Some(' ') => {}
                 Some('\t') => {}
                 Some('\n') => {}
@@ -154,7 +154,7 @@ fn parse_in_object<'b, S: TokenSink>(
                     json = &json[1..];
                     return Ok(json);
                 }
-                Some(c) => return Err(Error::UnexpectedChar(c)),
+                Some(c) => return Err(ParseError::UnexpectedChar(c)),
             }
 
             json = &json[1..];
@@ -165,11 +165,11 @@ fn parse_in_object<'b, S: TokenSink>(
 fn parse_in_array<'b, S: TokenSink>(
     sink: &mut S,
     mut json: &'b str,
-) -> Result<&'b str, Error<S::Error>> {
+) -> Result<&'b str, ParseError<S::Error>> {
     loop {
         loop {
             match json.chars().next() {
-                None => return Err(Error::UnexpectedEnd),
+                None => return Err(ParseError::UnexpectedEnd),
                 Some(' ') => {}
                 Some('\t') => {}
                 Some('\n') => {}
@@ -188,7 +188,7 @@ fn parse_in_array<'b, S: TokenSink>(
 
         loop {
             match json.chars().next() {
-                None => return Err(Error::UnexpectedEnd),
+                None => return Err(ParseError::UnexpectedEnd),
                 Some(' ') => {}
                 Some('\t') => {}
                 Some('\n') => {}
@@ -201,7 +201,7 @@ fn parse_in_array<'b, S: TokenSink>(
                     json = &json[1..];
                     return Ok(json);
                 }
-                Some(c) => return Err(Error::UnexpectedChar(c)),
+                Some(c) => return Err(ParseError::UnexpectedChar(c)),
             }
 
             json = &json[1..];
@@ -213,7 +213,7 @@ fn parse_in_string<'b, S: TokenSink>(
     sink: &mut S,
     json: &'b str,
     to_token: impl for<'c> FnOnce(&'c str) -> Token<'c>,
-) -> Result<&'b str, Error<S::Error>> {
+) -> Result<&'b str, ParseError<S::Error>> {
     let mut n = 0;
     let mut esc_n = 0; // -1 means single character.
     let mut esc_char = 0;
@@ -233,16 +233,16 @@ fn parse_in_string<'b, S: TokenSink>(
                     'r' => out.push('\r'),
                     't' => out.push('\t'),
                     'u' => esc_n = 4,
-                    _ => return Err(Error::UnexpectedChar(c)),
+                    _ => return Err(ParseError::UnexpectedChar(c)),
                 }
             }
             c if esc_n > 0 => {
                 esc_n -= 1;
                 esc_char <<= 4;
-                esc_char |= c.to_digit(0x10).ok_or(Error::UnexpectedChar(c))?;
+                esc_char |= c.to_digit(0x10).ok_or(ParseError::UnexpectedChar(c))?;
 
                 if esc_n == 0 {
-                    let ch = char::from_u32(esc_char).ok_or(Error::UnexpectedChar(c))?;
+                    let ch = char::from_u32(esc_char).ok_or(ParseError::UnexpectedChar(c))?;
                     out.push(ch);
                     esc_char = 0;
                 }
@@ -250,7 +250,7 @@ fn parse_in_string<'b, S: TokenSink>(
             '"' => {
                 n += c.len_utf8();
                 let token = as_str_token(out.as_str(), sink.expect_tokens(), to_token);
-                sink.yield_token(token).map_err(|err| Error::Sink(err))?;
+                sink.yield_token(token).map_err(|err| ParseError::Sink(err))?;
 
                 return Ok(&json[n..]);
             }
@@ -265,7 +265,7 @@ fn parse_in_string<'b, S: TokenSink>(
         n += c.len_utf8();
     }
 
-    Err(Error::UnexpectedEnd)
+    Err(ParseError::UnexpectedEnd)
 }
 
 fn as_str_token<'b>(
@@ -288,14 +288,14 @@ fn as_str_token<'b>(
     to_token(v)
 }
 
-fn parse_number<'b, S: TokenSink>(sink: &mut S, json: &'b str) -> Result<&'b str, Error<S::Error>> {
+fn parse_number<'b, S: TokenSink>(sink: &mut S, json: &'b str) -> Result<&'b str, ParseError<S::Error>> {
     let mut n = 0;
     let mut chars = json.chars();
 
     match chars.next().unwrap() {
         c if c.is_digit(10) => n += c.len_utf8(),
         '-' => n += 1,
-        c => return Err(Error::UnexpectedChar(c)),
+        c => return Err(ParseError::UnexpectedChar(c)),
     }
 
     for c in chars {
@@ -310,78 +310,80 @@ fn parse_number<'b, S: TokenSink>(sink: &mut S, json: &'b str) -> Result<&'b str
         }
     }
 
-    let out = f64::from_str(&json[..n]).map_err(|err| Error::ParseFloat(err))?;
     let token = sink.expect_tokens();
 
-    sink.yield_token(as_number_token(out, token))
-        .map_err(|err| Error::Sink(err))?;
+    sink.yield_token(as_number_token(&json[..n], token)?)
+        .map_err(|err| ParseError::Sink(err))?;
 
     Ok(&json[n..])
 }
 
-fn as_number_token<'b>(v: f64, expected: Option<TokenTypes>) -> Token<'b> {
+fn as_number_token<'b, E: crate::error::Error>(s: &'b str, expected: Option<TokenTypes>) -> Result<Token<'b>, ParseError<E>> {
+    let v = f64::from_str(s).map_err(|err| ParseError::ParseFloat(err))?;
+
     if let Some(tts) = expected {
         if !tts.contains(TokenType::F64) {
             for tt in tts.iter() {
                 match tt {
-                    TokenType::U8 => return Token::U8(v as u8),
-                    TokenType::U16 => return Token::U16(v as u16),
-                    TokenType::U32 => return Token::U32(v as u32),
-                    TokenType::U64 => return Token::U64(v as u64),
-                    TokenType::U128 => return Token::U128(v as u128),
-                    TokenType::Usize => return Token::Usize(v as usize),
-                    TokenType::I8 => return Token::I8(v as i8),
-                    TokenType::I16 => return Token::I16(v as i16),
-                    TokenType::I32 => return Token::I32(v as i32),
-                    TokenType::I64 => return Token::I64(v as i64),
-                    TokenType::I128 => return Token::I128(v as i128),
-                    TokenType::Isize => return Token::Isize(v as isize),
-                    TokenType::F32 => return Token::F32(v as f32),
+                    TokenType::U8 => return Ok(Token::U8(v as u8)),
+                    TokenType::U16 => return Ok(Token::U16(v as u16)),
+                    TokenType::U32 => return Ok(Token::U32(v as u32)),
+                    TokenType::U64 => return Ok(Token::U64(v as u64)),
+                    TokenType::U128 => return Ok(Token::U128(v as u128)),
+                    TokenType::Usize => return Ok(Token::Usize(v as usize)),
+                    TokenType::I8 => return Ok(Token::I8(v as i8)),
+                    TokenType::I16 => return Ok(Token::I16(v as i16)),
+                    TokenType::I32 => return Ok(Token::I32(v as i32)),
+                    TokenType::I64 => return Ok(Token::I64(v as i64)),
+                    TokenType::I128 => return Ok(Token::I128(v as i128)),
+                    TokenType::Isize => return Ok(Token::Isize(v as isize)),
+                    TokenType::F32 => return Ok(Token::F32(v as f32)),
+                    TokenType::Str => return Ok(Token::Str(s)),
                     _ => {}
                 }
             }
         }
     }
 
-    Token::F64(v)
+    Ok(Token::F64(v))
 }
 
 fn parse_in_false<'b, S: TokenSink>(
     sink: &mut S,
     json: &'b str,
-) -> Result<&'b str, Error<S::Error>> {
+) -> Result<&'b str, ParseError<S::Error>> {
     if json.starts_with("alse") {
         sink.yield_token(Token::Bool(false))
-            .map_err(|err| Error::Sink(err))?;
+            .map_err(|err| ParseError::Sink(err))?;
 
         Ok(&json[4..])
     } else if let Some(c) = json.chars().next() {
-        Err(Error::UnexpectedChar(c))
+        Err(ParseError::UnexpectedChar(c))
     } else {
-        Err(Error::UnexpectedEnd)
+        Err(ParseError::UnexpectedEnd)
     }
 }
 
 fn parse_in_true<'b, S: TokenSink>(
     sink: &mut S,
     json: &'b str,
-) -> Result<&'b str, Error<S::Error>> {
+) -> Result<&'b str, ParseError<S::Error>> {
     if json.starts_with("rue") {
         sink.yield_token(Token::Bool(true))
-            .map_err(|err| Error::Sink(err))?;
+            .map_err(|err| ParseError::Sink(err))?;
 
         Ok(&json[3..])
     } else if let Some(c) = json.chars().next() {
-        Err(Error::UnexpectedChar(c))
+        Err(ParseError::UnexpectedChar(c))
     } else {
-        Err(Error::UnexpectedEnd)
+        Err(ParseError::UnexpectedEnd)
     }
 }
 
 fn parse_in_null<'b, S: TokenSink>(
     sink: &mut S,
     json: &'b str,
-) -> Result<&'b str, Error<S::Error>> {
+) -> Result<&'b str, ParseError<S::Error>> {
     if json.starts_with("ull") {
         let tt = if let Some(tts) = sink.expect_tokens() {
             if tts.contains(TokenType::Seq) {
@@ -400,12 +402,12 @@ fn parse_in_null<'b, S: TokenSink>(
         match tt {
             TokenType::Unit => {
                 sink.yield_token(Token::Unit)
-                    .map_err(|err| Error::Sink(err))?;
+                    .map_err(|err| ParseError::Sink(err))?;
             }
             TokenType::Seq => {
                 let subsink = sink
                     .yield_start(Token::Seq(SeqMeta { size_hint: None }))
-                    .map_err(|err| Error::Sink(err))?;
+                    .map_err(|err| ParseError::Sink(err))?;
                 sink.end(subsink);
             }
             TokenType::Struct => {
@@ -414,13 +416,13 @@ fn parse_in_null<'b, S: TokenSink>(
                         size_hint: None,
                         fields: None,
                     }))
-                    .map_err(|err| Error::Sink(err))?;
+                    .map_err(|err| ParseError::Sink(err))?;
                 sink.end(subsink);
             }
             TokenType::Tuple => {
                 let subsink = sink
                     .yield_start(Token::Tuple(TupleMeta { size_hint: None }))
-                    .map_err(|err| Error::Sink(err))?;
+                    .map_err(|err| ParseError::Sink(err))?;
                 sink.end(subsink);
             }
             _ => unreachable!(),
@@ -428,9 +430,9 @@ fn parse_in_null<'b, S: TokenSink>(
 
         Ok(&json[3..])
     } else if let Some(c) = json.chars().next() {
-        Err(Error::UnexpectedChar(c))
+        Err(ParseError::UnexpectedChar(c))
     } else {
-        Err(Error::UnexpectedEnd)
+        Err(ParseError::UnexpectedEnd)
     }
 }
 
