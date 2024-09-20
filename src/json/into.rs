@@ -41,7 +41,10 @@ impl Error for WriteError {
 /// Writes JSON to `writer` from data in an [IntoTokens].
 ///
 /// The output JSON contains no whitespace.
-pub fn json_from_tokens<I: IntoTokens, W: fmt::Write>(writer: W, into: I) -> Result<(), WriteError> {
+pub fn json_from_tokens<I: IntoTokens, W: fmt::Write>(
+    writer: W,
+    into: I,
+) -> Result<(), WriteError> {
     let mut sink = JsonTokenSink {
         writer: Rc::new(RefCell::new(writer)),
         state: JsonState::Plain,
@@ -100,6 +103,9 @@ impl<W: fmt::Write> JsonTokenSink<W> {
                 w.write_str(":").map_err(|err| WriteError::Fmt(err))?;
                 self.state = JsonState::ObjectKey;
             }
+            JsonState::EnumVariant => self.state = JsonState::FirstEnumElement,
+            JsonState::FirstEnumElement => self.state = JsonState::EnumElement,
+            JsonState::EnumElement => w.write_str(",").map_err(|err| WriteError::Fmt(err))?,
             JsonState::Done => unreachable!(),
         }
 
@@ -160,6 +166,7 @@ impl<W: fmt::Write> TokenSink for JsonTokenSink<W> {
             Token::Seq(_) => JsonState::FirstArrayElement,
             Token::Tuple(_) => JsonState::FirstArrayElement,
             Token::Struct(_) => JsonState::FirstObjectKey,
+            Token::Enum(_) => JsonState::EnumVariant,
             _ => {
                 return Err(WriteError::Token(TokenError::InvalidToken(
                     token.into(),
@@ -171,6 +178,7 @@ impl<W: fmt::Write> TokenSink for JsonTokenSink<W> {
         match state {
             JsonState::FirstArrayElement => w.write_str("["),
             JsonState::FirstObjectKey => w.write_str("{"),
+            JsonState::EnumVariant => w.write_str("{"),
             _ => Ok(()),
         }
         .map_err(|err| WriteError::Fmt(err))?;
@@ -183,6 +191,22 @@ impl<W: fmt::Write> TokenSink for JsonTokenSink<W> {
 
     fn yield_token<'b>(&mut self, token: Token<'b>) -> Result<bool, Self::Error> {
         if token.is_end() {
+            match self.state {
+                JsonState::ObjectValue => {
+                    return Err(WriteError::Token(TokenError::InvalidToken(
+                        token.into(),
+                        None,
+                    )))
+                }
+                JsonState::EnumVariant => {
+                    return Err(WriteError::Token(TokenError::InvalidToken(
+                        token.into(),
+                        Some(TokenTypes::new(TokenType::Variant)),
+                    )))
+                }
+                _ => {}
+            }
+
             self.state = JsonState::Done;
         } else {
             self.write_sep(&token)?;
@@ -210,26 +234,21 @@ impl<W: fmt::Write> TokenSink for JsonTokenSink<W> {
             Token::Char(v) => Self::write_str(&mut w, v.to_string().as_str()),
             Token::Str(s) => Self::write_str(&mut w, s),
             Token::Field(s) => Self::write_str(&mut w, s),
+            Token::Variant(EnumVariant::Str(s)) => {
+                Self::write_str(&mut w, s).map_err(|err| WriteError::Fmt(err))?;
+                write!(w, ":[")
+            }
+            Token::Variant(EnumVariant::Usize(i)) => write!(w, "\"{}\":[", i),
 
             Token::Seq(_) => unreachable!(),
             Token::Tuple(_) => unreachable!(),
             Token::Struct(_) => unreachable!(),
+            Token::Enum(_) => unreachable!(),
 
             Token::EndSeq => w.write_str("]"),
             Token::EndTuple => w.write_str("]"),
-            Token::EndStruct => {
-                match self.state {
-                    JsonState::ObjectValue => {
-                        return Err(WriteError::Token(TokenError::InvalidToken(
-                            token.into(),
-                            None,
-                        )))
-                    }
-                    _ => {}
-                }
-
-                w.write_str("}")
-            }
+            Token::EndStruct => w.write_str("}"),
+            Token::EndEnum => w.write_str("]}"),
         }
         .map_err(|err| WriteError::Fmt(err))?;
 
@@ -250,11 +269,15 @@ impl<W: fmt::Write> TokenSink for JsonTokenSink<W> {
             JsonState::FirstObjectKey => Some(TokenTypes::new(TokenType::Field)),
             JsonState::ObjectKey => Some(TokenTypes::new(TokenType::Field)),
             JsonState::ObjectValue => None,
+            JsonState::EnumVariant => Some(TokenTypes::new(TokenType::Variant)),
+            JsonState::FirstEnumElement => None,
+            JsonState::EnumElement => None,
             JsonState::Done => Some(TokenTypes::EMPTY),
         }
     }
 }
 
+#[derive(Debug)]
 enum JsonState {
     Plain,
     FirstArrayElement,
@@ -262,6 +285,9 @@ enum JsonState {
     FirstObjectKey,
     ObjectKey,
     ObjectValue,
+    EnumVariant,
+    FirstEnumElement,
+    EnumElement,
     Done,
 }
 
@@ -392,10 +418,7 @@ mod tests {
     fn test_from_tokens_struct() {
         let cases = vec![
             (
-                vec![
-                    Token::Struct(StructMeta { fields: None }),
-                    Token::EndStruct,
-                ],
+                vec![Token::Struct(StructMeta { fields: None }), Token::EndStruct],
                 "{}",
             ),
             (
@@ -429,6 +452,65 @@ mod tests {
                     Token::EndStruct,
                 ],
                 "{\"akey\":{\"bkey\":false}}",
+            ),
+        ];
+
+        for (tokens, want) in cases {
+            let mut got = String::new();
+            json_from_tokens(&mut got, TokenVec::from_iter(tokens.into_iter())).unwrap();
+            assert_eq!(got, want);
+        }
+    }
+
+    #[test]
+    fn test_from_tokens_enum() {
+        let cases = vec![
+            (
+                vec![
+                    Token::Enum(EnumMeta { variants: None }),
+                    Token::Variant(EnumVariant::Str("a")),
+                    Token::EndEnum,
+                ],
+                "{\"a\":[]}",
+            ),
+            (
+                vec![
+                    Token::Enum(EnumMeta { variants: None }),
+                    Token::Variant(EnumVariant::Usize(42)),
+                    Token::EndEnum,
+                ],
+                "{\"42\":[]}",
+            ),
+            (
+                vec![
+                    Token::Enum(EnumMeta { variants: None }),
+                    Token::Variant(EnumVariant::Str("a")),
+                    Token::Bool(true),
+                    Token::EndEnum,
+                ],
+                "{\"a\":[true]}",
+            ),
+            (
+                vec![
+                    Token::Enum(EnumMeta { variants: None }),
+                    Token::Variant(EnumVariant::Str("a")),
+                    Token::Bool(true),
+                    Token::Bool(false),
+                    Token::EndEnum,
+                ],
+                "{\"a\":[true,false]}",
+            ),
+            (
+                vec![
+                    Token::Enum(EnumMeta { variants: None }),
+                    Token::Variant(EnumVariant::Str("a")),
+                    Token::Enum(EnumMeta { variants: None }),
+                    Token::Variant(EnumVariant::Str("b")),
+                    Token::Bool(true),
+                    Token::EndEnum,
+                    Token::EndEnum,
+                ],
+                "{\"a\":[{\"b\":[true]}]}",
             ),
         ];
 

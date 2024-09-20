@@ -57,31 +57,34 @@ macro_rules! define_tokens {
 
 define_tokens! {
     Unit,
-    Bool       => (bool)           => (bool),
-    U8         => (u8)             => (u8),
-    U16        => (u16)            => (u16),
-    U32        => (u32)            => (u32),
-    U64        => (u64)            => (u64),
-    U128       => (u128)           => (u128),
-    Usize      => (usize)          => (usize),
-    I8         => (i8)             => (i8),
-    I16        => (i16)            => (i16),
-    I32        => (i32)            => (i32),
-    I64        => (i64)            => (i64),
-    I128       => (i128)           => (i128),
-    Isize      => (isize)          => (isize),
-    F32        => (f32)            => (f32),
-    F64        => (f64)            => (f64),
-    Char       => (char)           => (char),
-    Str        => (&'a str)        => (String),
+    Bool       => (bool)            => (bool),
+    U8         => (u8)              => (u8),
+    U16        => (u16)             => (u16),
+    U32        => (u32)             => (u32),
+    U64        => (u64)             => (u64),
+    U128       => (u128)            => (u128),
+    Usize      => (usize)           => (usize),
+    I8         => (i8)              => (i8),
+    I16        => (i16)             => (i16),
+    I32        => (i32)             => (i32),
+    I64        => (i64)             => (i64),
+    I128       => (i128)            => (i128),
+    Isize      => (isize)           => (isize),
+    F32        => (f32)             => (f32),
+    F64        => (f64)             => (f64),
+    Char       => (char)            => (char),
+    Str        => (&'a str)         => (String),
 
-    Seq        => (SeqMeta)        => (SeqMeta),
+    Seq        => (SeqMeta)         => (SeqMeta),
     EndSeq,
-    Tuple      => (TupleMeta)      => (TupleMeta),
+    Tuple      => (TupleMeta)       => (TupleMeta),
     EndTuple,
-    Struct     => (StructMeta<'a>) => (OwningStructMeta),
-    Field      => (&'a str)        => (String),
+    Struct     => (StructMeta<'a>)  => (OwningStructMeta),
+    Field      => (&'a str)         => (String),
     EndStruct,
+    Enum       => (EnumMeta<'a>)    => (OwningEnumMeta),
+    Variant    => (EnumVariant<'a>) => (OwningEnumVariant),
+    EndEnum,
 }
 
 // These are unsound because of f32/f64.
@@ -202,6 +205,7 @@ macro_rules! token_is [
                     Self::Seq(_) => true,
                     Self::Tuple(_) => true,
                     Self::Struct(_) => true,
+                    Self::Enum(_) => true,
                     _ => false,
                 }
             }
@@ -212,6 +216,7 @@ macro_rules! token_is [
                     Self::EndSeq => true,
                     Self::EndTuple => true,
                     Self::EndStruct => true,
+                    Self::EndEnum => true,
                     _ => false,
                 }
             }
@@ -252,6 +257,9 @@ impl<'a> From<Token<'a>> for OwningToken {
             Token::Struct(meta) => Self::Struct(meta.into()),
             Token::Field(name) => Self::Field((*name).to_owned()),
             Token::EndStruct => Self::EndStruct,
+            Token::Enum(meta) => Self::Enum(meta.into()),
+            Token::Variant(name) => Self::Variant(name.into()),
+            Token::EndEnum => Self::EndEnum,
         }
     }
 }
@@ -286,6 +294,52 @@ impl<'a> From<&'a OwningToken> for Token<'a> {
             OwningToken::Struct(meta) => Self::Struct(meta.into()),
             OwningToken::Field(name) => Self::Field(name.as_str()),
             OwningToken::EndStruct => Self::EndStruct,
+            OwningToken::Enum(meta) => Self::Enum(meta.into()),
+            OwningToken::Variant(name) => Self::Variant(name.into()),
+            OwningToken::EndEnum => Self::EndEnum,
+        }
+    }
+}
+
+/// A specific enum variant, whether represented as a string or
+/// integer.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum EnumVariant<'a> {
+    Str(&'a str),
+    Usize(usize),
+}
+
+/// A specific enum variant (owned version,) whether represented as a
+/// string or integer.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum OwningEnumVariant {
+    Str(String),
+    Usize(usize),
+}
+
+impl<'a> From<EnumVariant<'a>> for OwningEnumVariant {
+    fn from(v: EnumVariant<'a>) -> Self {
+        match v {
+            EnumVariant::Str(s) => Self::Str(s.to_owned()),
+            EnumVariant::Usize(i) => Self::Usize(i),
+        }
+    }
+}
+
+impl<'a> From<&'a EnumVariant<'a>> for OwningEnumVariant {
+    fn from(v: &'a EnumVariant<'a>) -> Self {
+        match *v {
+            EnumVariant::Str(s) => Self::Str(s.to_owned()),
+            EnumVariant::Usize(i) => Self::Usize(i),
+        }
+    }
+}
+
+impl<'a> From<&'a OwningEnumVariant> for EnumVariant<'a> {
+    fn from(v: &'a OwningEnumVariant) -> Self {
+        match v {
+            OwningEnumVariant::Str(s) => Self::Str(s.as_str()),
+            OwningEnumVariant::Usize(i) => Self::Usize(*i),
         }
     }
 }
@@ -328,6 +382,36 @@ impl<'a> From<&'a OwningStructMeta> for StructMeta<'a> {
     fn from(_v: &'a OwningStructMeta) -> Self {
         Self {
             fields: None, // TODO
+        }
+    }
+}
+
+/// Metadata about a structure of named fields.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EnumMeta<'a> {
+    pub variants: Option<&'a [EnumVariant<'a>]>,
+}
+
+/// Metadata (owned variant) about a structure of named fields.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OwningEnumMeta {
+    pub variants: Option<Vec<OwningEnumVariant>>,
+}
+
+impl<'a> From<EnumMeta<'a>> for OwningEnumMeta {
+    fn from(v: EnumMeta<'a>) -> Self {
+        Self {
+            variants: v
+                .variants
+                .map(|variants| variants.into_iter().map(|name| name.into()).collect()),
+        }
+    }
+}
+
+impl<'a> From<&'a OwningEnumMeta> for EnumMeta<'a> {
+    fn from(_v: &'a OwningEnumMeta) -> Self {
+        Self {
+            variants: None, // TODO
         }
     }
 }
