@@ -25,7 +25,7 @@ macro_rules! define_tokens {
         /// * [Seq](Token::Seq): Each element is one token.
         /// * [Tuple](Token::Tuple): Each element is one token.
         /// * [Struct](Token::Struct): Each field is one [Token::Field] and one value token, in that order.
-        #[derive(Clone, Debug, Eq, PartialEq)]
+        #[derive(Clone, Debug, PartialEq)]
         pub enum Token<'a> {
             $($id $($ref)?),*
         }
@@ -33,7 +33,7 @@ macro_rules! define_tokens {
         /// The tokens and their data. The data is owned, making it
         /// useful for storage or sending to another thread. Prefer
         /// using [Token] to avoid duplicating data.
-        #[derive(Debug, Eq, PartialEq)]
+        #[derive(Clone, Debug, PartialEq)]
         pub enum OwningToken {
             $($id $($own)?),*
         }
@@ -54,8 +54,25 @@ macro_rules! define_tokens {
 }
 
 define_tokens! {
+    Unit       => (())             => (()),
     Bool       => (bool)           => (bool),
+    U8         => (u8)             => (u8),
+    U16        => (u16)            => (u16),
     U32        => (u32)            => (u32),
+    U64        => (u64)            => (u64),
+    U128       => (u128)           => (u128),
+    Usize      => (usize)          => (usize),
+    I8         => (i8)             => (i8),
+    I16        => (i16)            => (i16),
+    I32        => (i32)            => (i32),
+    I64        => (i64)            => (i64),
+    I128       => (i128)           => (i128),
+    Isize      => (isize)          => (isize),
+    F32        => (f32)            => (f32),
+    F64        => (f64)            => (f64),
+    Char       => (char)           => (char),
+    Str        => (&'a str)        => (String),
+
     Seq        => (SeqMeta)        => (SeqMeta),
     EndSeq,
     Tuple      => (TupleMeta)      => (TupleMeta),
@@ -64,6 +81,10 @@ define_tokens! {
     Field      => (&'a str)        => (String),
     EndStruct,
 }
+
+// These are unsound because of f32/f64.
+impl<'a> Eq for Token<'a> {}
+impl Eq for OwningToken {}
 
 /// A set of [TokenType] values.
 ///
@@ -113,6 +134,18 @@ impl TokenTypes {
     pub fn subtract(self, tt: TokenTypes) -> Self {
         Self(self.0 & !tt.0)
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.0 == 0
+    }
+
+    pub fn contains(&self, tt: TokenType) -> bool {
+        self.0 & (1 << tt as u64) != 0
+    }
+
+    pub fn iter(&self) -> TypeIter {
+        TypeIter(*self, 0)
+    }
 }
 
 /// Displays the set as pipe-separated tokens: `U32|Seq(...)`.
@@ -134,6 +167,25 @@ impl std::fmt::Debug for TokenTypes {
         }
 
         Ok(())
+    }
+}
+
+pub struct TypeIter(TokenTypes, u32);
+
+impl Iterator for TypeIter {
+    type Item = TokenType;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while self.1 < 64 {
+            let tt = TokenType::try_from(self.1 as u64).unwrap();
+            if self.0.contains(tt) {
+                return Some(tt);
+            }
+
+            self.1 += 1;
+        }
+
+        None
     }
 }
 
@@ -171,8 +223,25 @@ token_is![OwningToken];
 impl<'a> From<Token<'a>> for OwningToken {
     fn from(v: Token<'a>) -> Self {
         match v {
+            Token::Unit(()) => Self::Unit(()),
             Token::Bool(v) => Self::Bool(v),
+            Token::U8(v) => Self::U8(v),
+            Token::U16(v) => Self::U16(v),
             Token::U32(v) => Self::U32(v),
+            Token::U64(v) => Self::U64(v),
+            Token::U128(v) => Self::U128(v),
+            Token::Usize(v) => Self::Usize(v),
+            Token::I8(v) => Self::I8(v),
+            Token::I16(v) => Self::I16(v),
+            Token::I32(v) => Self::I32(v),
+            Token::I64(v) => Self::I64(v),
+            Token::I128(v) => Self::I128(v),
+            Token::Isize(v) => Self::Isize(v),
+            Token::F32(v) => Self::F32(v),
+            Token::F64(v) => Self::F64(v),
+            Token::Char(v) => Self::Char(v),
+            Token::Str(v) => Self::Str(v.to_owned()),
+
             Token::Seq(meta) => Self::Seq(meta.clone()),
             Token::EndSeq => Self::EndSeq,
             Token::Tuple(meta) => Self::Tuple(meta.clone()),
@@ -188,8 +257,25 @@ impl<'a> From<Token<'a>> for OwningToken {
 impl<'a> From<&'a OwningToken> for Token<'a> {
     fn from(v: &'a OwningToken) -> Self {
         match v {
+            OwningToken::Unit(()) => Self::Unit(()),
             OwningToken::Bool(v) => Self::Bool(*v),
+            OwningToken::U8(v) => Self::U8(*v),
+            OwningToken::U16(v) => Self::U16(*v),
             OwningToken::U32(v) => Self::U32(*v),
+            OwningToken::U64(v) => Self::U64(*v),
+            OwningToken::U128(v) => Self::U128(*v),
+            OwningToken::Usize(v) => Self::Usize(*v),
+            OwningToken::I8(v) => Self::I8(*v),
+            OwningToken::I16(v) => Self::I16(*v),
+            OwningToken::I32(v) => Self::I32(*v),
+            OwningToken::I64(v) => Self::I64(*v),
+            OwningToken::I128(v) => Self::I128(*v),
+            OwningToken::Isize(v) => Self::Isize(*v),
+            OwningToken::F32(v) => Self::F32(*v),
+            OwningToken::F64(v) => Self::F64(*v),
+            OwningToken::Char(v) => Self::Char(*v),
+            OwningToken::Str(v) => Self::Str(v.as_str()),
+
             OwningToken::Seq(meta) => Self::Seq(meta.clone()),
             OwningToken::EndSeq => Self::EndSeq,
             OwningToken::Tuple(meta) => Self::Tuple(meta.clone()),
@@ -221,7 +307,7 @@ pub struct StructMeta<'a> {
 }
 
 /// Metadata (owned variant) about a structure of named fields.
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OwningStructMeta {
     pub size_hint: Option<usize>,
     pub fields: Option<Vec<String>>,
