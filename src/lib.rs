@@ -56,11 +56,8 @@ pub use into::iter_into_tokens;
 
 pub mod json;
 
+pub mod test;
 pub mod token;
-
-mod printsink;
-pub use printsink::PrintError;
-pub use printsink::PrintingTokenSink;
 
 mod vec;
 pub use vec::TokenVec;

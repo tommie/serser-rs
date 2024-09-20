@@ -47,6 +47,7 @@ impl<DE: Error> std::error::Error for PrintError<DE> {}
 ///
 /// ```
 /// # use crate::serser::*;
+/// # use crate::serser::test::*;
 /// let mut got = TokenVec::new();
 /// let mut output = Vec::new();
 /// vec![42u32]
