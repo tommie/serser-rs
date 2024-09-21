@@ -99,6 +99,13 @@ where
     sink.yield_end(Token::EndSeq, subsink)
 }
 
+impl<'a> IntoTokens for Token<'a> {
+    fn into_tokens<S: TokenSink>(&self, sink: &mut S) -> Result<(), S::Error> {
+        sink.yield_token(self.clone())?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
