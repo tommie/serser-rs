@@ -41,6 +41,7 @@ use crate::token::*;
 /// The derive macro that automatically implements the [IntoTokens]
 /// for your structs and enums.
 pub mod derive {
+    pub use serser_derive::FromTokens;
     pub use serser_derive::IntoTokens;
 }
 
