@@ -19,4 +19,5 @@ readme.workspace = true
 
 [dependencies]
 base64 = "0.22.1"
+maybe-owned = "0.3.4"
 serser_derive = { version = "0.1.0", path = "serser_derive" }

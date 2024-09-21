@@ -2,6 +2,8 @@ use std::cell::RefCell;
 use std::fmt;
 use std::rc::Rc;
 
+use maybe_owned::MaybeOwnedMut;
+
 use crate::error::*;
 use crate::token::*;
 use crate::TokenSink;
@@ -61,9 +63,9 @@ impl<DE: Error> std::error::Error for PrintError<DE> {}
 ///         "T: EndSeq\n")
 /// );
 /// ```
-pub struct PrintingTokenSink<'a, S: TokenSink, W: std::io::Write> {
+pub struct PrintingTokenSink<'a: 'b, 'b, S: TokenSink, W: std::io::Write> {
     inner: Rc<RefCell<PrintingInner<'a, W>>>,
-    sink: &'a mut S,
+    sink: MaybeOwnedMut<'b, S>,
     indent: usize,
 }
 
@@ -73,13 +75,13 @@ struct PrintingInner<'a, W: std::io::Write> {
     writer: W,
 }
 
-impl<'a, S: TokenSink, W: std::io::Write> PrintingTokenSink<'a, S, W> {
+impl<'a: 'b, 'b, S: TokenSink, W: std::io::Write> PrintingTokenSink<'a, 'b, S, W> {
     /// Creates a new printing sink. The prefix is used for each
     /// output line, before the indentation.
-    pub fn new(sink: &'a mut S, writer: W, prefix: &'a str) -> Self {
+    pub fn new(sink: &'b mut S, writer: W, prefix: &'a str) -> Self {
         Self {
             inner: Rc::new(RefCell::new(PrintingInner { prefix, writer })),
-            sink,
+            sink: sink.into(),
             indent: 0,
         }
     }
@@ -102,13 +104,13 @@ impl<'a, W: std::io::Write> PrintingInner<'a, W> {
     }
 }
 
-impl<'a, S: TokenSink, W: std::io::Write> TokenSink for PrintingTokenSink<'a, S, W> {
+impl<'a: 'b, 'b, S: TokenSink, W: std::io::Write> TokenSink for PrintingTokenSink<'a, 'b, S, W> {
     type Error = PrintError<S::Error>;
-    type Subsink<'c> = PrintingTokenSubsink<'a, S::Subsink<'c>, W> where Self: 'c;
+    type Subsink<'c> = PrintingTokenSink<'a, 'c, S::Subsink<'c>, W> where Self: 'c;
 
-    fn yield_start<'b, 'c>(&mut self, token: Token<'b>) -> Result<Self::Subsink<'c>, Self::Error>
+    fn yield_start<'c, 'd>(&mut self, token: Token<'c>) -> Result<Self::Subsink<'d>, Self::Error>
     where
-        Self: 'c,
+        Self: 'd,
     {
         let mut inner = self.inner.borrow_mut();
 
@@ -123,14 +125,14 @@ impl<'a, S: TokenSink, W: std::io::Write> TokenSink for PrintingTokenSink<'a, S,
 
         // No need to call yield_token.
 
-        Ok(PrintingTokenSubsink {
+        Ok(PrintingTokenSink {
             inner: self.inner.clone(),
-            sink,
+            sink: sink.into(),
             indent: self.indent + 1,
         })
     }
 
-    fn yield_token<'b>(&mut self, token: Token<'b>) -> Result<(), Self::Error> {
+    fn yield_token<'c>(&mut self, token: Token<'c>) -> Result<(), Self::Error> {
         let mut inner = self.inner.borrow_mut();
 
         inner
@@ -142,13 +144,13 @@ impl<'a, S: TokenSink, W: std::io::Write> TokenSink for PrintingTokenSink<'a, S,
             .map_err(|err| PrintError::Downstream(err))
     }
 
-    fn yield_end<'b>(
+    fn yield_end<'c>(
         &mut self,
-        token: Token<'b>,
-        sink: Self::Subsink<'b>,
+        token: Token<'c>,
+        sink: Self::Subsink<'c>,
     ) -> Result<(), Self::Error>
     where
-        Self: 'b,
+        Self: 'c,
     {
         let mut inner = self.inner.borrow_mut();
 
@@ -158,77 +160,14 @@ impl<'a, S: TokenSink, W: std::io::Write> TokenSink for PrintingTokenSink<'a, S,
             .print_token(&token, self.indent)
             .map_err(|err| PrintError::Print(err))?;
 
-        self.sink
-            .yield_end(token, sink.sink)
-            .map_err(|err| PrintError::Downstream(err))
-    }
-
-    fn expect_tokens(&mut self) -> Option<TokenTypes> {
-        self.sink.expect_tokens()
-    }
-}
-
-pub struct PrintingTokenSubsink<'a, S: TokenSink, W: std::io::Write> {
-    inner: Rc<RefCell<PrintingInner<'a, W>>>,
-    sink: S,
-    indent: usize,
-}
-
-impl<'a, S: TokenSink, W: std::io::Write> TokenSink for PrintingTokenSubsink<'a, S, W> {
-    type Error = PrintError<S::Error>;
-    type Subsink<'c> = PrintingTokenSubsink<'a, S::Subsink<'c>, W> where Self: 'c;
-
-    fn yield_start<'b, 'c>(&mut self, token: Token<'b>) -> Result<Self::Subsink<'c>, Self::Error>
-    where
-        Self: 'c,
-    {
-        let mut inner = self.inner.borrow_mut();
-
-        inner
-            .print_token(&token, self.indent - if token.is_end() { 1 } else { 0 })
-            .map_err(|err| PrintError::Print(err))?;
-
-        let sink = self
-            .sink
-            .yield_start(token)
-            .map_err(|err| PrintError::Downstream(err))?;
-
-        Ok(PrintingTokenSubsink {
-            inner: self.inner.clone(),
-            sink,
-            indent: self.indent + 1,
-        })
-    }
-
-    fn yield_token<'b>(&mut self, token: Token<'b>) -> Result<(), Self::Error> {
-        let mut inner = self.inner.borrow_mut();
-
-        inner
-            .print_token(&token, self.indent - if token.is_end() { 1 } else { 0 })
-            .map_err(|err| PrintError::Print(err))?;
-
-        self.sink
-            .yield_token(token)
-            .map_err(|err| PrintError::Downstream(err))
-    }
-
-    fn yield_end<'b>(
-        &mut self,
-        token: Token<'b>,
-        sink: Self::Subsink<'b>,
-    ) -> Result<(), Self::Error>
-    where
-        Self: 'b,
-    {
-        let mut inner = self.inner.borrow_mut();
-
-        inner
-            .print_token(&token, self.indent - if token.is_end() { 1 } else { 0 })
-            .map_err(|err| PrintError::Print(err))?;
-
-        self.sink
-            .yield_end(token, sink.sink)
-            .map_err(|err| PrintError::Downstream(err))
+        if let MaybeOwnedMut::Owned(subsink) = sink.sink {
+            self.sink
+                .yield_end(token, subsink)
+                .map_err(|err| PrintError::Downstream(err))
+        } else {
+            // The sink from yield_start is always owned.
+            unreachable!()
+        }
     }
 
     fn expect_tokens(&mut self) -> Option<TokenTypes> {
