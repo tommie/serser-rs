@@ -122,22 +122,23 @@ impl<T: FromTokenSink> TokenSink for FromTokensSink<T> {
 pub struct BasicSink<T>(Option<T>);
 
 macro_rules! basic_from_tokens [
-    ($va:path, $tt:path => $ty:ty) => {
+    ($($tt:ident => $ty:ty),*$(,)?) => {
+        $(
         impl TokenSink for BasicSink<$ty> {
             type Error = TokenError;
             type Subsink<'c> = Self where Self: 'c;
 
             fn yield_start<'c, 'd>(&mut self, token: Token<'c>) -> Result<Self::Subsink<'d>, Self::Error> where Self: 'd {
-                Err(Self::Error::invalid_token(token, Some(TokenTypes::new($tt))))
+                Err(Self::Error::invalid_token(token, Some(TokenTypes::new(TokenType::$tt))))
             }
 
             fn yield_token<'b>(&mut self, token: Token<'b>) -> Result<(), Self::Error> {
                 match token {
-                    $va(v) => {
-                        self.0 = Some(v);
+                    Token::$tt(v) => {
+                        self.0 = Some(v.into());
                         Ok(())
                     }
-                    t => Err(Self::Error::invalid_token(t, Some(TokenTypes::new($tt)))),
+                    t => Err(Self::Error::invalid_token(t, Some(TokenTypes::new(TokenType::$tt)))),
                 }
             }
 
@@ -148,12 +149,12 @@ macro_rules! basic_from_tokens [
             ) -> Result<(), Self::Error>
             where
                 Self: 'b {
-                Err(Self::Error::invalid_token(token, Some(TokenTypes::new($tt))))
+                Err(Self::Error::invalid_token(token, Some(TokenTypes::new(TokenType::$tt))))
             }
 
             fn expect_tokens(&mut self) -> Option<TokenTypes> {
                 match self.0 {
-                    None => Some(TokenTypes::new($tt)),
+                    None => Some(TokenTypes::new(TokenType::$tt)),
                     Some(_) => Some(TokenTypes::EMPTY),
                 }
             }
@@ -170,11 +171,32 @@ macro_rules! basic_from_tokens [
                 sink.0
             }
         }
+        )*
     }
 ];
 
-basic_from_tokens![Token::Bool, TokenType::Bool => bool];
-basic_from_tokens![Token::U32, TokenType::Bool => u32];
+basic_from_tokens![
+    Bool => bool,
+
+    U8 => u8,
+    U16 => u16,
+    U32 => u32,
+    U64 => u64,
+    U128 => u128,
+    Usize => usize,
+
+    I8 => i8,
+    I16 => i16,
+    I32 => i32,
+    I64 => i64,
+    I128 => i128,
+    Isize => isize,
+
+    F32 => f32,
+    F64 => f64,
+    Char => char,
+    Str => String,
+];
 
 pub struct VecSink<T: FromTokenSink>(Option<Vec<T>>);
 
@@ -255,10 +277,39 @@ mod tests {
     use super::*;
     use crate::vec::*;
 
-    #[test]
-    fn test_bool_from() {
-        let tokens = TokenVec::from(vec![OwningToken::Bool(true)]);
-        assert_eq!(bool::from_tokens(tokens).unwrap(), true);
+    macro_rules! basic_test (
+        ($tt:ident $ty:path [$v:expr]) => {
+            #[allow(non_snake_case)]
+            #[test]
+            fn $tt() {
+                let tokens = TokenVec::from(vec![OwningToken::$tt($v)]);
+                assert_eq!(<$ty>::from_tokens(tokens).unwrap(), $v);
+            }
+        }
+    );
+
+    mod basic {
+        use super::super::*;
+        use crate::vec::*;
+
+        basic_test!(Bool bool [true]);
+        basic_test!(U8 u8 [42]);
+        basic_test!(U16 u16 [42]);
+        basic_test!(U32 u32 [42]);
+        basic_test!(U64 u64 [42]);
+        basic_test!(U128 u128 [42]);
+        basic_test!(Usize usize [42]);
+        basic_test!(I8 i8 [42]);
+        basic_test!(I16 i16 [42]);
+        basic_test!(I32 i32 [42]);
+        basic_test!(I64 i64 [42]);
+        basic_test!(I128 i128 [42]);
+        basic_test!(Isize isize [42]);
+
+        basic_test!(F32 f32 [42.5]);
+        basic_test!(F64 f64 [42.5]);
+        basic_test!(Char char ['W']);
+        basic_test!(Str String ["Hello".to_owned()]);
     }
 
     #[test]
