@@ -108,10 +108,14 @@ impl<T: FromTokenSink> TokenSink for FromTokensSink<T> {
     }
 
     fn expect_tokens(&mut self) -> Option<TokenTypes> {
-        self.sink
-            .as_mut()
-            .map(|sink| sink.expect_tokens())
-            .flatten()
+        if self.value.is_some() {
+            Some(TokenTypes::EMPTY)
+        } else {
+            self.sink
+                .as_mut()
+                .map(|sink| sink.expect_tokens())
+                .flatten()
+        }
     }
 }
 
@@ -148,7 +152,10 @@ macro_rules! basic_from_tokens [
             }
 
             fn expect_tokens(&mut self) -> Option<TokenTypes> {
-                Some(TokenTypes::new($tt))
+                match self.0 {
+                    None => Some(TokenTypes::new($tt)),
+                    Some(_) => Some(TokenTypes::EMPTY),
+                }
             }
         }
 
