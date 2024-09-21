@@ -23,6 +23,10 @@ impl<DE: Error> Error for PrintError<DE> {
         Self::Downstream(DE::invalid_token(token, expected))
     }
 
+    fn invalid_variant(variant: EnumVariant<'_>) -> Self {
+        Self::Downstream(DE::invalid_variant(variant))
+    }
+
     fn unexpected_end(expected: Option<TokenTypes>) -> Self {
         Self::Downstream(DE::unexpected_end(expected))
     }

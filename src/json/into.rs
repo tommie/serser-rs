@@ -35,6 +35,10 @@ impl Error for WriteError {
         WriteError::Token(TokenError::InvalidToken(token.into(), expected))
     }
 
+    fn invalid_variant(variant: EnumVariant<'_>) -> Self {
+        WriteError::Token(TokenError::InvalidVariant(variant.into()))
+    }
+
     fn unexpected_end(expected: Option<TokenTypes>) -> Self {
         WriteError::Token(TokenError::UnexpectedEnd(expected))
     }
