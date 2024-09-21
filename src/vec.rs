@@ -48,19 +48,28 @@ impl TokenSink for TokenVec {
     {
         self.yield_token(token)?;
 
-        Ok(TokenVec(self.0.clone()))
+        // No need to call yield_token.
+
+        Ok(Self(self.0.clone()))
     }
 
-    fn yield_token<'b>(&mut self, token: Token<'b>) -> Result<bool, Self::Error> {
+    fn yield_token<'b>(&mut self, token: Token<'b>) -> Result<(), Self::Error> {
         self.0.borrow_mut().push(token.into());
 
-        Ok(false)
+        Ok(())
     }
 
-    fn end<'b>(&mut self, _sink: Self::Subsink<'b>)
+    fn yield_end<'b>(
+        &mut self,
+        token: Token<'b>,
+        _sink: Self::Subsink<'b>,
+    ) -> Result<(), Self::Error>
     where
         Self: 'b,
     {
+        // No need to call yield_token.
+
+        self.yield_token(token)
     }
 }
 
@@ -69,27 +78,27 @@ impl TokenVec {
         &self,
         sink: &mut S,
         it: &mut I,
-    ) -> Result<(), S::Error> {
+    ) -> Result<Option<&'b OwningToken>, S::Error> {
         while let Some(token) = it.next() {
             if token.is_start() {
                 let mut subsink = sink.yield_start(token.into())?;
-                self.into_tokens_rec(&mut subsink, it)?;
-                sink.end(subsink);
+                let end = self.into_tokens_rec(&mut subsink, it)?;
+                sink.yield_end(end.unwrap().into(), subsink)?;
+            } else if token.is_end() {
+                return Ok(Some(token));
             } else {
-                let end = token.is_end();
                 sink.yield_token(token.into())?;
-                if end {
-                    break;
-                }
             }
         }
 
-        Ok(())
+        Ok(None)
     }
 }
 
 impl<'a> IntoTokens for TokenVec {
     fn into_tokens<S: TokenSink>(&self, sink: &mut S) -> Result<(), S::Error> {
-        self.into_tokens_rec(sink, &mut self.0.borrow().iter())
+        self.into_tokens_rec(sink, &mut self.0.borrow().iter())?;
+
+        Ok(())
     }
 }

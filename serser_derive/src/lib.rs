@@ -105,10 +105,7 @@ fn into_tokens_struct(data: &syn::DataStruct, input: &DeriveInput) -> Result<Tok
 
                 #(#yield_fields)*
 
-                subsink.yield_token(#end_token)?;
-                sink.end(subsink);
-
-                Ok(())
+                sink.yield_end(#end_token, subsink)
             }
         }
     }
@@ -213,10 +210,7 @@ fn into_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
                     #(#yield_fields)*
                 }
 
-                subsink.yield_token(::serser::token::Token::EndEnum)?;
-                sink.end(subsink);
-
-                Ok(())
+                sink.yield_end(::serser::token::Token::EndEnum, subsink)
             }
         }
     }

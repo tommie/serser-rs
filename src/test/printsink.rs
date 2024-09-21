@@ -121,6 +121,8 @@ impl<'a, S: TokenSink, W: std::io::Write> TokenSink for PrintingTokenSink<'a, S,
             .yield_start(token)
             .map_err(|err| PrintError::Downstream(err))?;
 
+        // No need to call yield_token.
+
         Ok(PrintingTokenSubsink {
             inner: self.inner.clone(),
             sink,
@@ -128,11 +130,11 @@ impl<'a, S: TokenSink, W: std::io::Write> TokenSink for PrintingTokenSink<'a, S,
         })
     }
 
-    fn yield_token<'b>(&mut self, token: Token<'b>) -> Result<bool, Self::Error> {
+    fn yield_token<'b>(&mut self, token: Token<'b>) -> Result<(), Self::Error> {
         let mut inner = self.inner.borrow_mut();
 
         inner
-            .print_token(&token, self.indent - if token.is_end() { 1 } else { 0 })
+            .print_token(&token, self.indent)
             .map_err(|err| PrintError::Print(err))?;
 
         self.sink
@@ -140,10 +142,25 @@ impl<'a, S: TokenSink, W: std::io::Write> TokenSink for PrintingTokenSink<'a, S,
             .map_err(|err| PrintError::Downstream(err))
     }
 
-    fn end<'b>(&mut self, _sink: Self::Subsink<'b>)
+    fn yield_end<'b>(
+        &mut self,
+        token: Token<'b>,
+        sink: Self::Subsink<'b>,
+    ) -> Result<(), Self::Error>
     where
         Self: 'b,
     {
+        let mut inner = self.inner.borrow_mut();
+
+        // No need to call yield_token.
+
+        inner
+            .print_token(&token, self.indent)
+            .map_err(|err| PrintError::Print(err))?;
+
+        self.sink
+            .yield_end(token, sink.sink)
+            .map_err(|err| PrintError::Downstream(err))
     }
 
     fn expect_tokens(&mut self) -> Option<TokenTypes> {
@@ -183,7 +200,7 @@ impl<'a, S: TokenSink, W: std::io::Write> TokenSink for PrintingTokenSubsink<'a,
         })
     }
 
-    fn yield_token<'b>(&mut self, token: Token<'b>) -> Result<bool, Self::Error> {
+    fn yield_token<'b>(&mut self, token: Token<'b>) -> Result<(), Self::Error> {
         let mut inner = self.inner.borrow_mut();
 
         inner
@@ -195,10 +212,23 @@ impl<'a, S: TokenSink, W: std::io::Write> TokenSink for PrintingTokenSubsink<'a,
             .map_err(|err| PrintError::Downstream(err))
     }
 
-    fn end<'b>(&mut self, _sink: Self::Subsink<'b>)
+    fn yield_end<'b>(
+        &mut self,
+        token: Token<'b>,
+        sink: Self::Subsink<'b>,
+    ) -> Result<(), Self::Error>
     where
         Self: 'b,
     {
+        let mut inner = self.inner.borrow_mut();
+
+        inner
+            .print_token(&token, self.indent - if token.is_end() { 1 } else { 0 })
+            .map_err(|err| PrintError::Print(err))?;
+
+        self.sink
+            .yield_end(token, sink.sink)
+            .map_err(|err| PrintError::Downstream(err))
     }
 
     fn expect_tokens(&mut self) -> Option<TokenTypes> {

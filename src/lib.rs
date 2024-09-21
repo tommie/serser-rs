@@ -78,24 +78,34 @@ pub trait TokenSink {
         Self: 'c;
 
     /// Returns the sink to yield tokens to until the corresponding
-    /// end token. The last token yielded to the subsink must be
-    /// [Token::is_end].
+    /// end token. It forwards the token to the subsink's
+    /// [yield_token] (not required if the subsink is of a type known
+    /// not to need it.)
     ///
     /// Sinks are encouraged to panic if `!token.is_start()`.
     fn yield_start<'b, 'c>(&mut self, token: Token<'b>) -> Result<Self::Subsink<'c>, Self::Error>
     where
         Self: 'c;
 
-    /// Handles a token from the stream. This may be a start token, if
-    /// it's destined for this sink, as opposed to a subsink. If so,
-    /// it is the first yielded token. Returns true if it doesn't
-    /// expect more tokens.
-    fn yield_token<'b>(&mut self, token: Token<'b>) -> Result<bool, Self::Error>;
+    /// Handles a token from the stream. This may be a start or end
+    /// token, if it's destined for this sink, as opposed to a
+    /// subsink. If so, it is the first and last yielded token,
+    /// respectively.
+    fn yield_token<'b>(&mut self, token: Token<'b>) -> Result<(), Self::Error>;
 
     /// Called when the subsink from [Self::yield_start] has received
-    /// its end token. It can be used to fetch the final value from
-    /// `sink`.
-    fn end<'b>(&mut self, sink: Self::Subsink<'b>)
+    /// its last token. It forwards the token to the subsink's
+    /// [yield_token] (not required if the subsink is of a type known
+    /// not to need it.)
+    ///
+    /// It can be used to fetch the final value from `sink`.
+    ///
+    /// Sinks are encouraged to panic if `!token.is_end()`.
+    fn yield_end<'b>(
+        &mut self,
+        token: Token<'b>,
+        sink: Self::Subsink<'b>,
+    ) -> Result<(), Self::Error>
     where
         Self: 'b;
 

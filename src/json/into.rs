@@ -193,13 +193,15 @@ impl<W: fmt::Write> TokenSink for JsonTokenSink<W> {
         }
         .map_err(|err| WriteError::Fmt(err))?;
 
+        // No need to call yield_token.
+
         Ok(Self {
             writer: self.writer.clone(),
             state,
         })
     }
 
-    fn yield_token<'b>(&mut self, token: Token<'b>) -> Result<bool, Self::Error> {
+    fn yield_token<'b>(&mut self, token: Token<'b>) -> Result<(), Self::Error> {
         if token.is_end() {
             match self.state {
                 JsonState::ObjectValue => {
@@ -256,20 +258,38 @@ impl<W: fmt::Write> TokenSink for JsonTokenSink<W> {
             Token::Struct(_) => unreachable!(),
             Token::Enum(_) => unreachable!(),
 
+            Token::EndSeq => unreachable!(),
+            Token::EndTuple => unreachable!(),
+            Token::EndStruct => unreachable!(),
+            Token::EndEnum => unreachable!(),
+        }
+        .map_err(|err| WriteError::Fmt(err))?;
+
+        Ok(())
+    }
+
+    fn yield_end<'b>(
+        &mut self,
+        token: Token<'b>,
+        _sink: Self::Subsink<'b>,
+    ) -> Result<(), Self::Error>
+    where
+        Self: 'b,
+    {
+        let mut w = self.writer.borrow_mut();
+
+        // No need to call yield_token.
+
+        match token {
             Token::EndSeq => w.write_str("]"),
             Token::EndTuple => w.write_str("]"),
             Token::EndStruct => w.write_str("}"),
             Token::EndEnum => w.write_str("]}"),
+            _ => unreachable!(),
         }
         .map_err(|err| WriteError::Fmt(err))?;
 
-        Ok(false)
-    }
-
-    fn end<'b>(&mut self, _sink: Self::Subsink<'b>)
-    where
-        Self: 'b,
-    {
+        Ok(())
     }
 
     fn expect_tokens(&mut self) -> Option<TokenTypes> {

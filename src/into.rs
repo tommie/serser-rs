@@ -91,13 +91,12 @@ where
 {
     let (_, size_hint) = it.size_hint();
     let mut subsink = sink.yield_start(Token::Seq(SeqMeta { size_hint }))?;
+
     for elem in it {
         elem.into_tokens(&mut subsink)?;
     }
-    subsink.yield_token(Token::EndSeq)?;
-    sink.end(subsink);
 
-    Ok(())
+    sink.yield_end(Token::EndSeq, subsink)
 }
 
 #[cfg(test)]

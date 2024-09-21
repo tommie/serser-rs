@@ -50,10 +50,8 @@ fn parse_any<'b, S: TokenSink>(
                     .map_err(|err| ParseError::Sink(err))?;
 
                 json = parse_in_enum_object(&mut subsink, &json[1..])?;
-                subsink
-                    .yield_token(Token::EndEnum)
+                sink.yield_end(Token::EndEnum, subsink)
                     .map_err(|err| ParseError::Sink(err))?;
-                sink.end(subsink);
 
                 return Ok(json);
             }
@@ -63,10 +61,8 @@ fn parse_any<'b, S: TokenSink>(
                     .map_err(|err| ParseError::Sink(err))?;
 
                 json = parse_in_object(&mut subsink, &json[1..])?;
-                subsink
-                    .yield_token(Token::EndStruct)
+                sink.yield_end(Token::EndStruct, subsink)
                     .map_err(|err| ParseError::Sink(err))?;
-                sink.end(subsink);
 
                 return Ok(json);
             }
@@ -77,10 +73,8 @@ fn parse_any<'b, S: TokenSink>(
                     .map_err(|err| ParseError::Sink(err))?;
 
                 json = parse_in_array(&mut subsink, &json[1..])?;
-                subsink
-                    .yield_token(end)
+                sink.yield_end(end, subsink)
                     .map_err(|err| ParseError::Sink(err))?;
-                sink.end(subsink);
 
                 return Ok(json);
             }
@@ -534,19 +528,22 @@ fn parse_in_null<'b, S: TokenSink>(
                 let subsink = sink
                     .yield_start(Token::Seq(SeqMeta { size_hint: None }))
                     .map_err(|err| ParseError::Sink(err))?;
-                sink.end(subsink);
+                sink.yield_end(Token::EndSeq, subsink)
+                    .map_err(|err| ParseError::Sink(err))?;
             }
             TokenType::Struct => {
                 let subsink = sink
                     .yield_start(Token::Struct(StructMeta { fields: None }))
                     .map_err(|err| ParseError::Sink(err))?;
-                sink.end(subsink);
+                sink.yield_end(Token::EndStruct, subsink)
+                    .map_err(|err| ParseError::Sink(err))?;
             }
             TokenType::Tuple => {
                 let subsink = sink
                     .yield_start(Token::Tuple(TupleMeta { size_hint: None }))
                     .map_err(|err| ParseError::Sink(err))?;
-                sink.end(subsink);
+                sink.yield_end(Token::EndTuple, subsink)
+                    .map_err(|err| ParseError::Sink(err))?;
             }
             _ => unreachable!(),
         }

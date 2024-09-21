@@ -28,19 +28,26 @@ impl<'a, S: TokenSink, F: Fn(usize) -> Option<TokenTypes>> TokenSink
         self.0.borrow_mut().0 += 1;
         let sink = self.1.yield_start(token)?;
 
+        // No need to call yield_token.
         Ok(ExpectingTokenSubsink(self.0.clone(), sink))
     }
 
-    fn yield_token<'b>(&mut self, token: Token<'b>) -> Result<bool, Self::Error> {
+    fn yield_token<'b>(&mut self, token: Token<'b>) -> Result<(), Self::Error> {
         self.0.borrow_mut().0 += 1;
         self.1.yield_token(token)
     }
 
-    fn end<'b>(&mut self, sink: Self::Subsink<'b>)
+    fn yield_end<'b>(
+        &mut self,
+        token: Token<'b>,
+        sink: Self::Subsink<'b>,
+    ) -> Result<(), Self::Error>
     where
         Self: 'b,
     {
-        self.1.end(sink.1);
+        // No need to call yield_token.
+        self.0.borrow_mut().0 += 1;
+        self.1.yield_end(token, sink.1)
     }
 
     fn expect_tokens(&mut self) -> Option<TokenTypes> {
@@ -69,16 +76,20 @@ impl<S: TokenSink, F: Fn(usize) -> Option<TokenTypes>> TokenSink for ExpectingTo
         Ok(ExpectingTokenSubsink(self.0.clone(), sink))
     }
 
-    fn yield_token<'b>(&mut self, token: Token<'b>) -> Result<bool, Self::Error> {
+    fn yield_token<'b>(&mut self, token: Token<'b>) -> Result<(), Self::Error> {
         self.0.borrow_mut().0 += 1;
         self.1.yield_token(token)
     }
 
-    fn end<'b>(&mut self, sink: Self::Subsink<'b>)
+    fn yield_end<'b>(
+        &mut self,
+        token: Token<'b>,
+        sink: Self::Subsink<'b>,
+    ) -> Result<(), Self::Error>
     where
         Self: 'b,
     {
-        self.1.end(sink.1);
+        self.1.yield_end(token, sink.1)
     }
 
     fn expect_tokens(&mut self) -> Option<TokenTypes> {
