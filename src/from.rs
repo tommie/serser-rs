@@ -198,7 +198,10 @@ basic_from_tokens![
     Str => String,
 ];
 
-pub struct VecSink<T: FromTokenSink>(Option<Vec<T>>);
+pub struct VecSink<T: FromTokenSink> {
+    out: Option<Vec<T>>,
+    is_bytes: bool,
+}
 
 impl<T: FromTokenSink> TokenSink for VecSink<T> {
     type Error = <T::Sink as TokenSink>::Error;
@@ -217,13 +220,25 @@ impl<T: FromTokenSink> TokenSink for VecSink<T> {
         match token {
             Token::Seq(meta) => {
                 if let Some(size) = meta.size_hint {
-                    self.0 = Some(Vec::with_capacity(size));
+                    self.out = Some(Vec::with_capacity(size));
                 } else {
-                    self.0 = Some(Vec::new())
+                    self.out = Some(Vec::new())
                 }
             }
             Token::EndSeq => {}
+            Token::Bytes(v) if self.is_bytes && self.out.is_none() => {
+                // SAFETY: assuming the is_vec_u8 hack is correct, this is a no-op.
+                let out: &mut Option<Vec<u8>> = unsafe { std::mem::transmute(&mut self.out) };
+                *out = Some(v.to_vec());
+            }
             t => {
+                if self.out.is_none() {
+                    return Err(Self::Error::invalid_token(
+                        t,
+                        Some(TokenTypes::new(TokenType::Seq)),
+                    ));
+                }
+
                 self.yield_end(t, T::new_sink())?;
             }
         }
@@ -242,7 +257,7 @@ impl<T: FromTokenSink> TokenSink for VecSink<T> {
         sink.yield_token(token)?;
 
         if let Some(v) = T::from_sink(sink) {
-            if let Some(vec) = self.0.as_mut() {
+            if let Some(vec) = self.out.as_mut() {
                 vec.push(v);
             } else {
                 panic!("No Seq token before element");
@@ -253,7 +268,7 @@ impl<T: FromTokenSink> TokenSink for VecSink<T> {
     }
 
     fn expect_tokens(&mut self) -> Option<TokenTypes> {
-        match self.0 {
+        match self.out {
             None => Some(TokenTypes::new(TokenType::Seq)),
             Some(_) => T::expect_initial().map(|tt| tt.with(TokenType::EndSeq)),
         }
@@ -264,11 +279,40 @@ impl<T: FromTokenSink> FromTokenSink for Vec<T> {
     type Sink = VecSink<T>;
 
     fn new_sink() -> Self::Sink {
-        VecSink(None)
+        VecSink {
+            out: None,
+            is_bytes: is_vec_u8::<Vec<T>>(),
+        }
     }
 
     fn from_sink(sink: Self::Sink) -> Option<Self> {
-        sink.0
+        sink.out
+    }
+}
+
+// From https://users.rust-lang.org/t/hack-to-specialize-w-write-for-vec-u8/100366/6.
+fn is_vec_u8<T>() -> bool {
+    use std::cell::Cell;
+    use std::marker::PhantomData;
+
+    struct IsVecU8<'a, T>(&'a Cell<bool>, PhantomData<T>);
+    // Rust specializes Copy and doesn't call Clone
+    impl Copy for IsVecU8<'_, Vec<u8>> {}
+
+    impl<T> Clone for IsVecU8<'_, T> {
+        fn clone(&self) -> Self {
+            self.0.set(false);
+            Self(self.0, self.1)
+        }
+    }
+    let cell = Cell::new(true);
+    _ = [IsVecU8::<'_, T>(&cell, PhantomData)].clone();
+    if cell.get() {
+        assert_eq!(std::mem::size_of::<T>(), std::mem::size_of::<Vec<u8>>());
+        assert_eq!(std::mem::align_of::<T>(), std::mem::align_of::<Vec<u8>>());
+        true
+    } else {
+        false
     }
 }
 
@@ -310,6 +354,36 @@ mod tests {
         basic_test!(F64 f64 [42.5]);
         basic_test!(Char char ['W']);
         basic_test!(Str String ["Hello".to_owned()]);
+    }
+
+    #[test]
+    fn test_vec_u8_bytes() {
+        let tokens = TokenVec::from(vec![OwningToken::Bytes(b"Hello World".to_vec())]);
+        assert_eq!(Vec::<u8>::from_tokens(tokens).unwrap(), b"Hello World");
+    }
+
+    #[test]
+    fn test_vec_i8_bytes_fails() {
+        let input = OwningToken::Bytes(b"Hello World".to_vec());
+        let tokens = TokenVec::from(vec![input.clone()]);
+        assert_eq!(
+            Vec::<i8>::from_tokens(tokens).unwrap_err(),
+            TokenError::InvalidToken(input, Some(TokenTypes::new(TokenType::Seq)))
+        );
+    }
+
+    #[test]
+    fn test_vec_u8() {
+        let tokens = TokenVec::from(vec![
+            OwningToken::Seq(SeqMeta { size_hint: Some(5) }),
+            OwningToken::U8(b'H'),
+            OwningToken::U8(b'e'),
+            OwningToken::U8(b'l'),
+            OwningToken::U8(b'l'),
+            OwningToken::U8(b'o'),
+            OwningToken::EndSeq,
+        ]);
+        assert_eq!(Vec::<u8>::from_tokens(tokens).unwrap(), b"Hello");
     }
 
     #[test]
