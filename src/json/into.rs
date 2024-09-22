@@ -1,564 +1,803 @@
-use std::fmt;
+use std::str::FromStr;
 
 use base64::prelude::*;
 
 use crate::token::*;
-use crate::Error;
-use crate::IntoTokens;
-use crate::TokenError;
 use crate::TokenSink;
 
-/// The error returned from [json_from_tokens].
+/// The error returned from [json_into_tokens].
 #[derive(Debug, Eq, PartialEq)]
-pub enum WriteError {
-    /// The string formatter (or I/O) failed.
-    Fmt(fmt::Error),
+pub enum ParseError<E: crate::error::Error> {
+    /// An error returned by the [TokenSink].
+    Sink(E),
 
-    /// The token stream was invalid.
-    Token(TokenError),
+    /// The JSON data ended prematurely.
+    UnexpectedEnd,
+
+    /// The JSON data contained an unexpected character.
+    UnexpectedChar(char),
+
+    /// Something that looked like a number couldn't be parsed as one.
+    ParseFloat(std::num::ParseFloatError),
+
+    /// A bytes string could not be decoded.
+    Base64(base64::DecodeError),
 }
 
-impl fmt::Display for WriteError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Self::Fmt(err) => err.fmt(f),
-            Self::Token(err) => err.fmt(f),
+/// Parses a JSON string into a token sink.
+pub fn json_into_tokens<S: TokenSink>(
+    sink: &mut S,
+    json: &str,
+) -> Result<(), ParseError<S::Error>> {
+    parse_any(sink, json)?;
+
+    Ok(())
+}
+
+fn parse_any<'b, S: TokenSink>(
+    sink: &mut S,
+    mut json: &'b str,
+) -> Result<&'b str, ParseError<S::Error>> {
+    loop {
+        match json.chars().next() {
+            Some(' ') => {}
+            Some('\t') => {}
+            Some('\n') => {}
+            Some('\r') => {}
+            Some('{') if expects_enum(sink) => {
+                sink.yield_token(Token::Enum(EnumMeta { variants: None }))
+                    .map_err(|err| ParseError::Sink(err))?;
+
+                json = parse_in_enum_object(sink, &json[1..])?;
+                sink.yield_token(Token::EndEnum)
+                    .map_err(|err| ParseError::Sink(err))?;
+
+                return Ok(json);
+            }
+            Some('{') => {
+                sink.yield_token(Token::Struct(StructMeta { fields: None }))
+                    .map_err(|err| ParseError::Sink(err))?;
+
+                json = parse_in_object(sink, &json[1..])?;
+                sink.yield_token(Token::EndStruct)
+                    .map_err(|err| ParseError::Sink(err))?;
+
+                return Ok(json);
+            }
+            Some('[') => {
+                let (start, end) = tokens_for_array(sink.expect_tokens());
+                sink.yield_token(start)
+                    .map_err(|err| ParseError::Sink(err))?;
+
+                json = parse_in_array(sink, &json[1..])?;
+                sink.yield_token(end).map_err(|err| ParseError::Sink(err))?;
+
+                return Ok(json);
+            }
+            Some('"') => return parse_in_string(sink, &json[1..], TokenType::Str),
+            Some(c) if c == '-' || c.is_digit(10) => return parse_number(sink, json),
+            Some('f') => return parse_in_false(sink, &json[1..]),
+            Some('t') => return parse_in_true(sink, &json[1..]),
+            Some('n') => return parse_in_null(sink, &json[1..]),
+            Some(c) => return Err(ParseError::UnexpectedChar(c)),
+            None => return Ok(json),
+        }
+
+        json = &json[1..];
+    }
+}
+
+fn tokens_for_array<'b>(expected: Option<TokenTypes>) -> (Token<'b>, Token<'b>) {
+    if let Some(tts) = expected {
+        if !tts.contains(TokenType::Seq) {
+            for tt in tts.iter() {
+                match tt {
+                    TokenType::Tuple => {
+                        return (Token::Tuple(TupleMeta { size_hint: None }), Token::EndTuple)
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    (Token::Seq(SeqMeta { size_hint: None }), Token::EndSeq)
+}
+
+fn expects_enum<S: TokenSink>(sink: &mut S) -> bool {
+    if let Some(tts) = sink.expect_tokens() {
+        tts.contains(TokenType::Enum)
+    } else {
+        false
+    }
+}
+
+fn parse_in_enum_object<'b, S: TokenSink>(
+    sink: &mut S,
+    mut json: &'b str,
+) -> Result<&'b str, ParseError<S::Error>> {
+    loop {
+        match json.chars().next() {
+            None => return Err(ParseError::UnexpectedEnd),
+            Some(' ') => {}
+            Some('\t') => {}
+            Some('\n') => {}
+            Some('\r') => {}
+            Some('"') => {
+                json = &json[1..];
+                break;
+            }
+            Some(c) => return Err(ParseError::UnexpectedChar(c)),
+        }
+
+        json = &json[1..];
+    }
+
+    json = parse_in_string(sink, json, TokenType::Variant)?;
+
+    loop {
+        match json.chars().next() {
+            None => return Err(ParseError::UnexpectedEnd),
+            Some(' ') => {}
+            Some('\t') => {}
+            Some('\n') => {}
+            Some('\r') => {}
+            Some(':') => {
+                json = &json[1..];
+                break;
+            }
+            Some(c) => return Err(ParseError::UnexpectedChar(c)),
+        }
+
+        json = &json[1..];
+    }
+
+    loop {
+        match json.chars().next() {
+            None => return Err(ParseError::UnexpectedEnd),
+            Some(' ') => {}
+            Some('\t') => {}
+            Some('\n') => {}
+            Some('\r') => {}
+            Some('[') => {
+                json = &json[1..];
+                break;
+            }
+            Some(c) => return Err(ParseError::UnexpectedChar(c)),
+        }
+
+        json = &json[1..];
+    }
+
+    json = parse_in_array(sink, json)?;
+
+    loop {
+        match json.chars().next() {
+            None => return Err(ParseError::UnexpectedEnd),
+            Some(' ') => {}
+            Some('\t') => {}
+            Some('\n') => {}
+            Some('\r') => {}
+            Some('}') => {
+                json = &json[1..];
+                return Ok(json);
+            }
+            Some(c) => return Err(ParseError::UnexpectedChar(c)),
+        }
+
+        json = &json[1..];
+    }
+}
+
+fn parse_in_object<'b, S: TokenSink>(
+    sink: &mut S,
+    mut json: &'b str,
+) -> Result<&'b str, ParseError<S::Error>> {
+    loop {
+        loop {
+            match json.chars().next() {
+                None => return Err(ParseError::UnexpectedEnd),
+                Some(' ') => {}
+                Some('\t') => {}
+                Some('\n') => {}
+                Some('\r') => {}
+                Some('}') => {
+                    json = &json[1..];
+                    return Ok(json);
+                }
+                Some('"') => {
+                    json = &json[1..];
+                    break;
+                }
+                Some(c) => return Err(ParseError::UnexpectedChar(c)),
+            }
+
+            json = &json[1..];
+        }
+
+        json = parse_in_string(sink, json, TokenType::Field)?;
+
+        loop {
+            match json.chars().next() {
+                None => return Err(ParseError::UnexpectedEnd),
+                Some(' ') => {}
+                Some('\t') => {}
+                Some('\n') => {}
+                Some('\r') => {}
+                Some(':') => {
+                    json = &json[1..];
+                    break;
+                }
+                Some(c) => return Err(ParseError::UnexpectedChar(c)),
+            }
+
+            json = &json[1..];
+        }
+
+        json = parse_any(sink, json)?;
+
+        loop {
+            match json.chars().next() {
+                None => return Err(ParseError::UnexpectedEnd),
+                Some(' ') => {}
+                Some('\t') => {}
+                Some('\n') => {}
+                Some('\r') => {}
+                Some(',') => {
+                    json = &json[1..];
+                    break;
+                }
+                Some('}') => {
+                    json = &json[1..];
+                    return Ok(json);
+                }
+                Some(c) => return Err(ParseError::UnexpectedChar(c)),
+            }
+
+            json = &json[1..];
         }
     }
 }
 
-impl std::error::Error for WriteError {}
-impl Error for WriteError {
-    fn invalid_token(token: Token<'_>, expected: Option<TokenTypes>) -> Self {
-        WriteError::Token(TokenError::invalid_token(token, expected))
-    }
-
-    fn invalid_field(field: &str) -> Self {
-        WriteError::Token(TokenError::invalid_field(field))
-    }
-
-    fn missing_fields(fields: &[&str]) -> Self {
-        WriteError::Token(TokenError::missing_fields(fields))
-    }
-
-    fn invalid_variant(variant: EnumVariant<'_>) -> Self {
-        WriteError::Token(TokenError::invalid_variant(variant))
-    }
-
-    fn unexpected_end(expected: Option<TokenTypes>) -> Self {
-        WriteError::Token(TokenError::unexpected_end(expected))
-    }
-}
-
-/// Writes JSON to `writer` from data in an [IntoTokens].
-///
-/// The output JSON contains no whitespace.
-pub fn json_from_tokens<I: IntoTokens, W: fmt::Write>(
-    writer: W,
-    into: I,
-) -> Result<(), WriteError> {
-    let mut sink = JsonTokenSink {
-        writer,
-        state: JsonState::Plain,
-        states: Vec::new(),
-    };
-    into.into_tokens(&mut sink)?;
-
-    match sink.state {
-        JsonState::Done => Ok(()),
-        _ => Err(WriteError::unexpected_end(sink.expect_tokens())),
-    }
-}
-
-struct JsonTokenSink<W: fmt::Write> {
-    writer: W,
-    state: JsonState,
-    states: Vec<JsonState>,
-}
-
-impl<W: fmt::Write> JsonTokenSink<W> {
-    /// Writes the comma or colon as appropriate before a
-    /// token. Updates the state.
-    fn write_sep(&mut self, token: &Token<'_>) -> Result<(), WriteError> {
-        match self.state {
-            JsonState::Plain => self.state = JsonState::Done,
-            JsonState::FirstArrayElement => self.state = JsonState::ArrayElement,
-            JsonState::ArrayElement => self
-                .writer
-                .write_str(",")
-                .map_err(|err| WriteError::Fmt(err))?,
-            JsonState::FirstObjectKey => {
-                match token {
-                    Token::Field(_) => {}
-                    _ => {
-                        return Err(WriteError::invalid_token(
-                            token.clone(),
-                            Some(TokenTypes::new(TokenType::Field)),
-                        ))
-                    }
+fn parse_in_array<'b, S: TokenSink>(
+    sink: &mut S,
+    mut json: &'b str,
+) -> Result<&'b str, ParseError<S::Error>> {
+    loop {
+        loop {
+            match json.chars().next() {
+                None => return Err(ParseError::UnexpectedEnd),
+                Some(' ') => {}
+                Some('\t') => {}
+                Some('\n') => {}
+                Some('\r') => {}
+                Some(']') => {
+                    json = &json[1..];
+                    return Ok(json);
                 }
+                Some(_) => break,
+            }
 
-                self.state = JsonState::ObjectValue;
-            }
-            JsonState::ObjectKey => {
-                match token {
-                    Token::Field(_) => {}
-                    _ => {
-                        return Err(WriteError::invalid_token(
-                            token.clone(),
-                            Some(TokenTypes::new(TokenType::Field)),
-                        ))
-                    }
-                }
-
-                self.writer
-                    .write_str(",")
-                    .map_err(|err| WriteError::Fmt(err))?;
-                self.state = JsonState::ObjectValue;
-            }
-            JsonState::ObjectValue => {
-                self.writer
-                    .write_str(":")
-                    .map_err(|err| WriteError::Fmt(err))?;
-                self.state = JsonState::ObjectKey;
-            }
-            JsonState::EnumVariant => self.state = JsonState::FirstEnumElement,
-            JsonState::FirstEnumElement => self.state = JsonState::EnumElement,
-            JsonState::EnumElement => self
-                .writer
-                .write_str(",")
-                .map_err(|err| WriteError::Fmt(err))?,
-            JsonState::Done => unreachable!(),
+            json = &json[1..];
         }
 
-        Ok(())
+        json = parse_any(sink, json)?;
+
+        loop {
+            match json.chars().next() {
+                None => return Err(ParseError::UnexpectedEnd),
+                Some(' ') => {}
+                Some('\t') => {}
+                Some('\n') => {}
+                Some('\r') => {}
+                Some(',') => {
+                    json = &json[1..];
+                    break;
+                }
+                Some(']') => {
+                    json = &json[1..];
+                    return Ok(json);
+                }
+                Some(c) => return Err(ParseError::UnexpectedChar(c)),
+            }
+
+            json = &json[1..];
+        }
     }
+}
 
-    fn write_bytes(&mut self, v: &[u8]) -> Result<(), fmt::Error> {
-        let w = &mut self.writer;
+fn parse_in_string<'b, S: TokenSink>(
+    sink: &mut S,
+    json: &'b str,
+    default_type: TokenType,
+) -> Result<&'b str, ParseError<S::Error>> {
+    let mut n = 0;
+    let mut esc_n = 0; // -1 means single character.
+    let mut esc_char = 0;
+    let mut out = String::new();
 
-        w.write_char('"')?;
-        w.write_str(BASE64_STANDARD.encode(v).as_str())?;
-        w.write_char('"')?;
-
-        Ok(())
-    }
-
-    fn write_str(&mut self, s: &str) -> Result<(), fmt::Error> {
-        let mut start = 0;
-        let mut end = 0;
-        let w = &mut self.writer;
-
-        w.write_char('"')?;
-
-        for c in s.chars() {
-            if c == '\\' || c == '"' || c < ' ' {
-                w.write_str(&s[start..end])?;
-
-                w.write_char('\\')?;
-
+    for c in json.chars() {
+        match c {
+            c if esc_n == -1 => {
+                esc_n = 0;
                 match c {
-                    '\x07' => w.write_char('b')?,
-                    '\x0C' => w.write_char('f')?,
-                    '\n' => w.write_char('n')?,
-                    '\r' => w.write_char('r')?,
-                    '\t' => w.write_char('t')?,
-                    c if c < ' ' => write!(w, "u{:04X}", c as u32)?,
-                    c => w.write_char(c)?,
+                    '"' => out.push(c),
+                    '\\' => out.push(c),
+                    '/' => out.push(c),
+                    'b' => out.push('\x07'),
+                    'f' => out.push('\x0C'),
+                    'n' => out.push('\n'),
+                    'r' => out.push('\r'),
+                    't' => out.push('\t'),
+                    'u' => esc_n = 4,
+                    _ => return Err(ParseError::UnexpectedChar(c)),
                 }
+            }
+            c if esc_n > 0 => {
+                esc_n -= 1;
+                esc_char <<= 4;
+                esc_char |= c.to_digit(0x10).ok_or(ParseError::UnexpectedChar(c))?;
 
-                end += c.len_utf8();
-                start = end;
-            } else {
-                end += c.len_utf8();
+                if esc_n == 0 {
+                    let ch = char::from_u32(esc_char).ok_or(ParseError::UnexpectedChar(c))?;
+                    out.push(ch);
+                    esc_char = 0;
+                }
+            }
+            '"' => {
+                n += c.len_utf8();
+                match str_token_type(sink.expect_tokens(), default_type) {
+                    TokenType::Str => sink.yield_token(Token::Str(out.as_str())),
+                    TokenType::Field => sink.yield_token(Token::Field(out.as_str())),
+                    TokenType::Variant => {
+                        sink.yield_token(Token::Variant(EnumVariant::Str(out.as_str())))
+                    }
+                    TokenType::Bytes => sink.yield_token(Token::Bytes(
+                        BASE64_STANDARD
+                            .decode(out.as_bytes())
+                            .map_err(|err| ParseError::Base64(err))?
+                            .as_slice(),
+                    )),
+                    _ => unreachable!(),
+                }
+                .map_err(|err| ParseError::Sink(err))?;
+
+                return Ok(&json[n..]);
+            }
+            '\\' => {
+                esc_n = -1;
+            }
+            c => {
+                out.push(c);
             }
         }
 
-        if start < end {
-            w.write_str(&s[start..end])?;
-        }
-
-        w.write_char('"')?;
-
-        Ok(())
+        n += c.len_utf8();
     }
+
+    Err(ParseError::UnexpectedEnd)
 }
 
-impl<W: fmt::Write> TokenSink for JsonTokenSink<W> {
-    type Error = WriteError;
-
-    fn yield_token(&mut self, token: Token<'_>) -> Result<bool, Self::Error> {
-        if token.is_end() {
-            match self.state {
-                JsonState::ObjectValue => {
-                    return Err(WriteError::Token(TokenError::InvalidToken(
-                        token.into(),
-                        None,
-                    )))
-                }
-                JsonState::EnumVariant => {
-                    return Err(WriteError::Token(TokenError::InvalidToken(
-                        token.into(),
-                        Some(TokenTypes::new(TokenType::Variant)),
-                    )))
-                }
-                _ => {}
-            }
-
-            self.state = JsonState::Done;
+fn str_token_type(expected: Option<TokenTypes>, default_type: TokenType) -> TokenType {
+    if let Some(tts) = expected {
+        if tts.contains(default_type) {
+            default_type
+        } else if tts.contains(TokenType::Str) {
+            TokenType::Str
+        } else if tts.contains(TokenType::Field) {
+            TokenType::Field
+        } else if tts.contains(TokenType::Variant) {
+            TokenType::Variant
+        } else if tts.contains(TokenType::Bytes) {
+            TokenType::Bytes
         } else {
-            self.write_sep(&token)?;
+            default_type
         }
-
-        let w = &mut self.writer;
-
-        match token {
-            Token::Unit => w.write_str("null"),
-            Token::Bool(v) => write!(w, "{}", v),
-            Token::U8(v) => write!(w, "{}", v),
-            Token::U16(v) => write!(w, "{}", v),
-            Token::U32(v) => write!(w, "{}", v),
-            Token::U64(v) => write!(w, "{}", v),
-            Token::U128(v) => write!(w, "{}", v),
-            Token::Usize(v) => write!(w, "{}", v),
-            Token::I8(v) => write!(w, "{}", v),
-            Token::I16(v) => write!(w, "{}", v),
-            Token::I32(v) => write!(w, "{}", v),
-            Token::I64(v) => write!(w, "{}", v),
-            Token::I128(v) => write!(w, "{}", v),
-            Token::Isize(v) => write!(w, "{}", v),
-            Token::F32(v) => write!(w, "{}", v),
-            Token::F64(v) => write!(w, "{}", v),
-            Token::Char(v) => self.write_str(v.to_string().as_str()),
-            Token::Bytes(v) => self.write_bytes(v),
-            Token::Str(s) => self.write_str(s),
-            Token::Field(s) => self.write_str(s),
-            Token::Variant(EnumVariant::Str(s)) => {
-                self.write_str(s).map_err(|err| WriteError::Fmt(err))?;
-                self.writer.write_str(":[")
-            }
-            Token::Variant(EnumVariant::Usize(i)) => write!(w, "\"{}\":[", i),
-
-            Token::Seq(_) => {
-                self.states.push(std::mem::replace(
-                    &mut self.state,
-                    JsonState::FirstArrayElement,
-                ));
-                w.write_str("[")
-            }
-            Token::Tuple(_) => {
-                self.states.push(std::mem::replace(
-                    &mut self.state,
-                    JsonState::FirstArrayElement,
-                ));
-                w.write_str("[")
-            }
-            Token::Struct(_) => {
-                self.states.push(std::mem::replace(
-                    &mut self.state,
-                    JsonState::FirstObjectKey,
-                ));
-                w.write_str("{")
-            }
-            Token::Enum(_) => {
-                self.states
-                    .push(std::mem::replace(&mut self.state, JsonState::EnumVariant));
-                w.write_str("{")
-            }
-
-            Token::EndSeq => {
-                self.state = self
-                    .states
-                    .pop()
-                    .ok_or(WriteError::invalid_token(token, Some(TokenTypes::EMPTY)))?;
-                w.write_str("]")
-            }
-            Token::EndTuple => {
-                self.state = self
-                    .states
-                    .pop()
-                    .ok_or(WriteError::invalid_token(token, Some(TokenTypes::EMPTY)))?;
-                w.write_str("]")
-            }
-            Token::EndStruct => {
-                self.state = self
-                    .states
-                    .pop()
-                    .ok_or(WriteError::invalid_token(token, Some(TokenTypes::EMPTY)))?;
-                w.write_str("}")
-            }
-            Token::EndEnum => {
-                self.state = self
-                    .states
-                    .pop()
-                    .ok_or(WriteError::invalid_token(token, Some(TokenTypes::EMPTY)))?;
-                w.write_str("]}")
-            }
-        }
-        .map_err(|err| WriteError::Fmt(err))?;
-
-        Ok(true)
-    }
-
-    fn expect_tokens(&mut self) -> Option<TokenTypes> {
-        match self.state {
-            JsonState::Plain => None,
-            JsonState::FirstArrayElement => None,
-            JsonState::ArrayElement => None,
-            JsonState::FirstObjectKey => Some(TokenTypes::new(TokenType::Field)),
-            JsonState::ObjectKey => Some(TokenTypes::new(TokenType::Field)),
-            JsonState::ObjectValue => None,
-            JsonState::EnumVariant => Some(TokenTypes::new(TokenType::Variant)),
-            JsonState::FirstEnumElement => None,
-            JsonState::EnumElement => None,
-            JsonState::Done => Some(TokenTypes::EMPTY),
-        }
+    } else {
+        default_type
     }
 }
 
-#[derive(Debug)]
-enum JsonState {
-    Plain,
-    FirstArrayElement,
-    ArrayElement,
-    FirstObjectKey,
-    ObjectKey,
-    ObjectValue,
-    EnumVariant,
-    FirstEnumElement,
-    EnumElement,
-    Done,
+fn parse_number<'b, S: TokenSink>(
+    sink: &mut S,
+    json: &'b str,
+) -> Result<&'b str, ParseError<S::Error>> {
+    let mut n = 0;
+    let mut chars = json.chars();
+
+    match chars.next().unwrap() {
+        c if c.is_digit(10) => n += c.len_utf8(),
+        '-' => n += 1,
+        c => return Err(ParseError::UnexpectedChar(c)),
+    }
+
+    for c in chars {
+        match c {
+            c if c.is_digit(10) => n += c.len_utf8(),
+            '.' => n += 1,
+            'e' => n += 1,
+            'E' => n += 1,
+            '+' => n += 1,
+            '-' => n += 1,
+            _ => break,
+        }
+    }
+
+    let token = sink.expect_tokens();
+
+    sink.yield_token(as_number_token(&json[..n], token)?)
+        .map_err(|err| ParseError::Sink(err))?;
+
+    Ok(&json[n..])
+}
+
+fn as_number_token<'b, E: crate::error::Error>(
+    s: &'b str,
+    expected: Option<TokenTypes>,
+) -> Result<Token<'b>, ParseError<E>> {
+    let v = f64::from_str(s).map_err(|err| ParseError::ParseFloat(err))?;
+
+    if let Some(tts) = expected {
+        if !tts.contains(TokenType::F64) {
+            for tt in tts.iter() {
+                match tt {
+                    TokenType::U8 => return Ok(Token::U8(v as u8)),
+                    TokenType::U16 => return Ok(Token::U16(v as u16)),
+                    TokenType::U32 => return Ok(Token::U32(v as u32)),
+                    TokenType::U64 => return Ok(Token::U64(v as u64)),
+                    TokenType::U128 => return Ok(Token::U128(v as u128)),
+                    TokenType::Usize => return Ok(Token::Usize(v as usize)),
+                    TokenType::I8 => return Ok(Token::I8(v as i8)),
+                    TokenType::I16 => return Ok(Token::I16(v as i16)),
+                    TokenType::I32 => return Ok(Token::I32(v as i32)),
+                    TokenType::I64 => return Ok(Token::I64(v as i64)),
+                    TokenType::I128 => return Ok(Token::I128(v as i128)),
+                    TokenType::Isize => return Ok(Token::Isize(v as isize)),
+                    TokenType::F32 => return Ok(Token::F32(v as f32)),
+                    TokenType::Str => return Ok(Token::Str(s)),
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    Ok(Token::F64(v))
+}
+
+fn parse_in_false<'b, S: TokenSink>(
+    sink: &mut S,
+    json: &'b str,
+) -> Result<&'b str, ParseError<S::Error>> {
+    if json.starts_with("alse") {
+        sink.yield_token(Token::Bool(false))
+            .map_err(|err| ParseError::Sink(err))?;
+
+        Ok(&json[4..])
+    } else if let Some(c) = json.chars().next() {
+        Err(ParseError::UnexpectedChar(c))
+    } else {
+        Err(ParseError::UnexpectedEnd)
+    }
+}
+
+fn parse_in_true<'b, S: TokenSink>(
+    sink: &mut S,
+    json: &'b str,
+) -> Result<&'b str, ParseError<S::Error>> {
+    if json.starts_with("rue") {
+        sink.yield_token(Token::Bool(true))
+            .map_err(|err| ParseError::Sink(err))?;
+
+        Ok(&json[3..])
+    } else if let Some(c) = json.chars().next() {
+        Err(ParseError::UnexpectedChar(c))
+    } else {
+        Err(ParseError::UnexpectedEnd)
+    }
+}
+
+fn parse_in_null<'b, S: TokenSink>(
+    sink: &mut S,
+    json: &'b str,
+) -> Result<&'b str, ParseError<S::Error>> {
+    if json.starts_with("ull") {
+        let tt = if let Some(tts) = sink.expect_tokens() {
+            if tts.contains(TokenType::Seq) {
+                TokenType::Seq
+            } else if tts.contains(TokenType::Tuple) {
+                TokenType::Tuple
+            } else if tts.contains(TokenType::Struct) {
+                TokenType::Struct
+            } else {
+                TokenType::Unit
+            }
+        } else {
+            TokenType::Unit
+        };
+
+        match tt {
+            TokenType::Unit => {
+                sink.yield_token(Token::Unit)
+                    .map_err(|err| ParseError::Sink(err))?;
+            }
+            TokenType::Seq => {
+                sink.yield_token(Token::Seq(SeqMeta { size_hint: None }))
+                    .map_err(|err| ParseError::Sink(err))?;
+                sink.yield_token(Token::EndSeq)
+                    .map_err(|err| ParseError::Sink(err))?;
+            }
+            TokenType::Struct => {
+                sink.yield_token(Token::Struct(StructMeta { fields: None }))
+                    .map_err(|err| ParseError::Sink(err))?;
+                sink.yield_token(Token::EndStruct)
+                    .map_err(|err| ParseError::Sink(err))?;
+            }
+            TokenType::Tuple => {
+                sink.yield_token(Token::Tuple(TupleMeta { size_hint: None }))
+                    .map_err(|err| ParseError::Sink(err))?;
+                sink.yield_token(Token::EndTuple)
+                    .map_err(|err| ParseError::Sink(err))?;
+            }
+            _ => unreachable!(),
+        }
+
+        Ok(&json[3..])
+    } else if let Some(c) = json.chars().next() {
+        Err(ParseError::UnexpectedChar(c))
+    } else {
+        Err(ParseError::UnexpectedEnd)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::TokenVec;
+    use crate::test::ExpectingTokenSink;
+    use crate::*;
 
     #[test]
-    fn test_from_tokens_plain() {
-        let cases = vec![
-            (Token::Unit, "null"),
-            (Token::Bool(true), "true"),
-            (Token::U8(42), "42"),
-            (Token::U16(42), "42"),
-            (Token::U32(42), "42"),
-            (Token::U64(42), "42"),
-            (Token::U128(42), "42"),
-            (Token::Usize(42), "42"),
-            (Token::I8(42), "42"),
-            (Token::I16(42), "42"),
-            (Token::I32(42), "42"),
-            (Token::I64(42), "42"),
-            (Token::I128(42), "42"),
-            (Token::Isize(42), "42"),
-            (Token::Char('a'), "\"a\""),
-            (Token::Bytes(b""), "\"\""),
-            (Token::Bytes(b"\x00"), "\"AA==\""),
-            (Token::Str("hello"), "\"hello\""),
-            (Token::Str("\n"), "\"\\n\""),
-            (Token::Str("❤️"), "\"❤️\""),
-            (Token::Str("\x1F"), "\"\\u001F\""),
-            (Token::Str("hello"), "\"hello\""),
-        ];
+    fn test_json_into_tokens_empty() {
+        let cases = vec!["", " "];
 
-        for (token, want) in cases {
-            let mut got = String::new();
-            json_from_tokens(&mut got, TokenVec::from_iter(vec![token].into_iter())).unwrap();
-            assert_eq!(got, want);
+        for json in cases {
+            let mut got = TokenVec::new();
+            json_into_tokens(&mut got, json).unwrap();
+            assert_eq!(got.into_vec(), vec![]);
         }
     }
 
     #[test]
-    fn test_from_tokens_seq() {
-        let cases = vec![
-            (
-                vec![Token::Seq(SeqMeta { size_hint: None }), Token::EndSeq],
-                "[]",
-            ),
-            (
-                vec![
-                    Token::Seq(SeqMeta { size_hint: None }),
-                    Token::Bool(true),
-                    Token::EndSeq,
-                ],
-                "[true]",
-            ),
-            (
-                vec![
-                    Token::Seq(SeqMeta { size_hint: None }),
-                    Token::Bool(true),
-                    Token::Bool(false),
-                    Token::EndSeq,
-                ],
-                "[true,false]",
-            ),
-            (
-                vec![
-                    Token::Seq(SeqMeta { size_hint: None }),
-                    Token::Seq(SeqMeta { size_hint: None }),
-                    Token::Bool(true),
-                    Token::EndSeq,
-                    Token::EndSeq,
-                ],
-                "[[true]]",
-            ),
-        ];
+    fn test_json_into_tokens_null() {
+        let cases = vec!["null", " null"];
 
-        for (tokens, want) in cases {
-            let mut got = String::new();
-            json_from_tokens(&mut got, TokenVec::from_iter(tokens.into_iter())).unwrap();
-            assert_eq!(got, want);
+        for json in cases {
+            let mut got = TokenVec::new();
+            json_into_tokens(&mut got, json).unwrap();
+            assert_eq!(got.into_vec(), vec![OwningToken::Unit]);
         }
     }
 
     #[test]
-    fn test_from_tokens_tuple() {
-        let cases = vec![
-            (
-                vec![Token::Tuple(TupleMeta { size_hint: None }), Token::EndTuple],
-                "[]",
-            ),
-            (
-                vec![
-                    Token::Tuple(TupleMeta { size_hint: None }),
-                    Token::Bool(true),
-                    Token::EndTuple,
-                ],
-                "[true]",
-            ),
-            (
-                vec![
-                    Token::Tuple(TupleMeta { size_hint: None }),
-                    Token::Bool(true),
-                    Token::Bool(false),
-                    Token::EndTuple,
-                ],
-                "[true,false]",
-            ),
-            (
-                vec![
-                    Token::Tuple(TupleMeta { size_hint: None }),
-                    Token::Tuple(TupleMeta { size_hint: None }),
-                    Token::Bool(true),
-                    Token::EndTuple,
-                    Token::EndTuple,
-                ],
-                "[[true]]",
-            ),
-        ];
+    fn test_json_into_tokens_bool() {
+        let cases = vec![("false", false), (" false", false), ("true", true)];
 
-        for (tokens, want) in cases {
-            let mut got = String::new();
-            json_from_tokens(&mut got, TokenVec::from_iter(tokens.into_iter())).unwrap();
-            assert_eq!(got, want);
+        for (json, want) in cases {
+            let mut got = TokenVec::new();
+            json_into_tokens(&mut got, json).unwrap();
+            assert_eq!(got.into_vec(), vec![OwningToken::Bool(want)]);
         }
     }
 
     #[test]
-    fn test_from_tokens_struct() {
+    fn test_json_into_tokens_f64() {
         let cases = vec![
-            (
-                vec![Token::Struct(StructMeta { fields: None }), Token::EndStruct],
-                "{}",
-            ),
-            (
-                vec![
-                    Token::Struct(StructMeta { fields: None }),
-                    Token::Field("akey"),
-                    Token::Bool(true),
-                    Token::EndStruct,
-                ],
-                "{\"akey\":true}",
-            ),
-            (
-                vec![
-                    Token::Struct(StructMeta { fields: None }),
-                    Token::Field("akey"),
-                    Token::Bool(true),
-                    Token::Field("bkey"),
-                    Token::Bool(false),
-                    Token::EndStruct,
-                ],
-                "{\"akey\":true,\"bkey\":false}",
-            ),
-            (
-                vec![
-                    Token::Struct(StructMeta { fields: None }),
-                    Token::Field("akey"),
-                    Token::Struct(StructMeta { fields: None }),
-                    Token::Field("bkey"),
-                    Token::Bool(false),
-                    Token::EndStruct,
-                    Token::EndStruct,
-                ],
-                "{\"akey\":{\"bkey\":false}}",
-            ),
+            ("0", 0.0),
+            ("-0", 0.0),
+            ("-1", -1.0),
+            ("0.25", 0.25),
+            ("1000", 1000.0),
+            ("1e3", 1000.0),
+            ("1E3", 1000.0),
+            ("1e+3", 1000.0),
+            ("5e-1", 0.5),
         ];
 
-        for (tokens, want) in cases {
-            let mut got = String::new();
-            json_from_tokens(&mut got, TokenVec::from_iter(tokens.into_iter())).unwrap();
-            assert_eq!(got, want);
+        for (json, want) in cases {
+            let mut got = TokenVec::new();
+            json_into_tokens(&mut got, json).unwrap();
+            assert_eq!(got.into_vec(), vec![OwningToken::F64(want)]);
         }
     }
 
     #[test]
-    fn test_from_tokens_enum() {
+    fn test_json_into_tokens_str() {
         let cases = vec![
+            (r#""""#, ""),
+            (r#""a""#, "a"),
+            (r#""abc""#, "abc"),
+            (r#""❤️""#, "❤️"),
+            (r#""\\""#, "\\"),
+            (r#""\/""#, "/"),
+            (r#""\t""#, "\t"),
+            (r#""\u000A""#, "\n"),
+            (r#""\u000a""#, "\n"),
+        ];
+
+        for (json, want) in cases {
+            let mut got = TokenVec::new();
+            json_into_tokens(&mut got, json).unwrap();
+            assert_eq!(got.into_vec(), vec![OwningToken::Str(want.to_owned())]);
+        }
+    }
+
+    #[test]
+    fn test_json_into_tokens_bytes() {
+        let cases = vec![(r#""""#, b"".as_slice()), (r#""AA==""#, b"\x00".as_slice())];
+
+        for (json, want) in cases {
+            let mut got = TokenVec::new();
+            let mut expsink =
+                ExpectingTokenSink::new(&mut got, |_| Some(TokenTypes::new(TokenType::Bytes)));
+            json_into_tokens(&mut expsink, json).unwrap();
+            assert_eq!(got.into_vec(), vec![OwningToken::Bytes(want.to_owned())]);
+        }
+    }
+
+    #[test]
+    fn test_json_into_tokens_array() {
+        let start = || OwningToken::Seq(SeqMeta { size_hint: None });
+        let end = || OwningToken::EndSeq;
+        let cases = vec![
+            ("[]", vec![start(), end()]),
+            (" [ ]", vec![start(), end()]),
+            ("[false]", vec![start(), OwningToken::Bool(false), end()]),
+            ("[ false ]", vec![start(), OwningToken::Bool(false), end()]),
             (
+                "[false,true]",
                 vec![
-                    Token::Enum(EnumMeta { variants: None }),
-                    Token::Variant(EnumVariant::Str("a")),
-                    Token::EndEnum,
+                    start(),
+                    OwningToken::Bool(false),
+                    OwningToken::Bool(true),
+                    end(),
                 ],
-                "{\"a\":[]}",
             ),
             (
+                "[false , true]",
                 vec![
-                    Token::Enum(EnumMeta { variants: None }),
-                    Token::Variant(EnumVariant::Usize(42)),
-                    Token::EndEnum,
+                    start(),
+                    OwningToken::Bool(false),
+                    OwningToken::Bool(true),
+                    end(),
                 ],
-                "{\"42\":[]}",
+            ),
+            ("[[]]", vec![start(), start(), end(), end()]),
+            (
+                "[[false],true]",
+                vec![
+                    start(),
+                    start(),
+                    OwningToken::Bool(false),
+                    end(),
+                    OwningToken::Bool(true),
+                    end(),
+                ],
             ),
             (
-                vec![
-                    Token::Enum(EnumMeta { variants: None }),
-                    Token::Variant(EnumVariant::Str("a")),
-                    Token::Bool(true),
-                    Token::EndEnum,
-                ],
-                "{\"a\":[true]}",
+                "[[],[]]",
+                vec![start(), start(), end(), start(), end(), end()],
             ),
             (
+                "[false,null,42]",
                 vec![
-                    Token::Enum(EnumMeta { variants: None }),
-                    Token::Variant(EnumVariant::Str("a")),
-                    Token::Bool(true),
-                    Token::Bool(false),
-                    Token::EndEnum,
+                    start(),
+                    OwningToken::Bool(false),
+                    OwningToken::Unit,
+                    OwningToken::F64(42.0),
+                    end(),
                 ],
-                "{\"a\":[true,false]}",
-            ),
-            (
-                vec![
-                    Token::Enum(EnumMeta { variants: None }),
-                    Token::Variant(EnumVariant::Str("a")),
-                    Token::Enum(EnumMeta { variants: None }),
-                    Token::Variant(EnumVariant::Str("b")),
-                    Token::Bool(true),
-                    Token::EndEnum,
-                    Token::EndEnum,
-                ],
-                "{\"a\":[{\"b\":[true]}]}",
             ),
         ];
 
-        for (tokens, want) in cases {
-            let mut got = String::new();
-            json_from_tokens(&mut got, TokenVec::from_iter(tokens.into_iter())).unwrap();
-            assert_eq!(got, want);
+        for (json, want) in cases {
+            let mut got = TokenVec::new();
+            json_into_tokens(&mut got, json).unwrap();
+            assert_eq!(got.into_vec(), want);
+        }
+    }
+
+    #[test]
+    fn test_json_into_tokens_object() {
+        let start = || OwningToken::Struct(OwningStructMeta { fields: None });
+        let end = || OwningToken::EndStruct;
+        let cases = vec![
+            ("{}", vec![start(), end()]),
+            (" { }", vec![start(), end()]),
+            (
+                r#"{"a":true}"#,
+                vec![
+                    start(),
+                    OwningToken::Field("a".to_owned()),
+                    OwningToken::Bool(true),
+                    end(),
+                ],
+            ),
+            (
+                r#"{ "a" : true }"#,
+                vec![
+                    start(),
+                    OwningToken::Field("a".to_owned()),
+                    OwningToken::Bool(true),
+                    end(),
+                ],
+            ),
+            (
+                r#"{"a":true,"b":false}"#,
+                vec![
+                    start(),
+                    OwningToken::Field("a".to_owned()),
+                    OwningToken::Bool(true),
+                    OwningToken::Field("b".to_owned()),
+                    OwningToken::Bool(false),
+                    end(),
+                ],
+            ),
+        ];
+
+        for (json, want) in cases {
+            let mut got = TokenVec::new();
+            json_into_tokens(&mut got, json).unwrap();
+            assert_eq!(got.into_vec(), want);
+        }
+    }
+
+    #[test]
+    fn test_json_into_tokens_enum() {
+        let start = || OwningToken::Enum(OwningEnumMeta { variants: None });
+        let end = || OwningToken::EndEnum;
+        let cases = vec![
+            (
+                r#"{"a":[]}"#,
+                vec![
+                    start(),
+                    OwningToken::Variant(OwningEnumVariant::Str("a".to_owned())),
+                    end(),
+                ],
+            ),
+            (
+                r#"{ "a" : [ ] }"#,
+                vec![
+                    start(),
+                    OwningToken::Variant(OwningEnumVariant::Str("a".to_owned())),
+                    end(),
+                ],
+            ),
+            (
+                r#"{"a":[true]}"#,
+                vec![
+                    start(),
+                    OwningToken::Variant(OwningEnumVariant::Str("a".to_owned())),
+                    OwningToken::Bool(true),
+                    end(),
+                ],
+            ),
+            (
+                r#"{"a":[true,false]}"#,
+                vec![
+                    start(),
+                    OwningToken::Variant(OwningEnumVariant::Str("a".to_owned())),
+                    OwningToken::Bool(true),
+                    OwningToken::Bool(false),
+                    end(),
+                ],
+            ),
+        ];
+
+        for (json, want) in cases {
+            let mut got = TokenVec::new();
+            let mut expsink =
+                ExpectingTokenSink::new(&mut got, |_| Some(TokenTypes::new(TokenType::Enum)));
+            json_into_tokens(&mut expsink, json).unwrap();
+            assert_eq!(got.into_vec(), want);
         }
     }
 }
