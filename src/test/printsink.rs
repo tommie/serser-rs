@@ -19,6 +19,14 @@ impl<DE: Error> Error for PrintError<DE> {
         Self::Downstream(DE::invalid_token(token, expected))
     }
 
+    fn invalid_field(field: &str) -> Self {
+        Self::Downstream(DE::invalid_field(field))
+    }
+
+    fn missing_fields(fields: &[&str]) -> Self {
+        Self::Downstream(DE::missing_fields(fields))
+    }
+
     fn invalid_variant(variant: EnumVariant<'_>) -> Self {
         Self::Downstream(DE::invalid_variant(variant))
     }

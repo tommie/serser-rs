@@ -5,6 +5,104 @@ mod tests {
     use serser::*;
 
     #[test]
+    fn from_tokens_struct_named_empty() {
+        #[derive(Debug, Eq, FromTokens, PartialEq)]
+        struct AStruct {}
+
+        let got = AStruct::from_tokens(TokenVec::from(vec![
+            OwningToken::Struct(OwningStructMeta {
+                fields: Some(vec![]),
+            }),
+            OwningToken::EndStruct,
+        ]))
+        .unwrap();
+        assert_eq!(got, AStruct {});
+    }
+
+    #[test]
+    fn from_tokens_struct_named() {
+        #[derive(Debug, Eq, FromTokens, PartialEq)]
+        struct AStruct {
+            a: bool,
+            b: u32,
+        }
+
+        let got = AStruct::from_tokens(TokenVec::from(vec![
+            OwningToken::Struct(OwningStructMeta {
+                fields: Some(vec![
+                    "a".to_owned(),
+                    "b".to_owned(),
+                ]),
+            }),
+            OwningToken::Field("a".to_owned()),
+            OwningToken::Bool(true),
+            OwningToken::Field("b".to_owned()),
+            OwningToken::U32(42),
+            OwningToken::EndStruct,
+        ]))
+        .unwrap();
+        assert_eq!(got, AStruct { a: true, b: 42 });
+    }
+
+    #[test]
+    fn from_tokens_struct_named_nested() {
+        #[derive(Debug, Eq, FromTokens, PartialEq)]
+        struct AStruct {
+            a: bool,
+        }
+
+        #[derive(Debug, Eq, FromTokens, PartialEq)]
+        struct AnotherStruct {
+            b: AStruct,
+            c: u32,
+        }
+
+        let got = AnotherStruct::from_tokens(TokenVec::from(vec![
+            OwningToken::Struct(OwningStructMeta {
+                fields: Some(vec![
+                    "b".to_owned(),
+                    "c".to_owned(),
+                ]),
+            }),
+            OwningToken::Field("b".to_owned()),
+            OwningToken::Struct(OwningStructMeta {
+                fields: Some(vec!["a".to_owned()]),
+            }),
+            OwningToken::Field("a".to_owned()),
+            OwningToken::Bool(true),
+            OwningToken::EndStruct,
+            OwningToken::Field("c".to_owned()),
+            OwningToken::U32(42),
+            OwningToken::EndStruct,
+        ]))
+        .unwrap();
+        assert_eq!(got, AnotherStruct {
+            b: AStruct { a: true },
+            c: 42,
+        });
+    }
+
+    #[test]
+    fn from_tokens_struct_named_partial() {
+        #[derive(Debug, Eq, FromTokens, PartialEq)]
+        struct AStruct {
+            a: bool,
+            b: u32,
+        }
+
+        let got = AStruct::from_tokens(TokenVec::from(vec![
+            OwningToken::Struct(OwningStructMeta {
+                fields: Some(vec!["a".to_owned()]),
+            }),
+            OwningToken::Field("a".to_owned()),
+            OwningToken::Bool(true),
+            OwningToken::EndStruct,
+        ]))
+        .unwrap_err();
+        assert_eq!(got, TokenError::MissingFields(vec!["b".to_owned()]));
+    }
+
+    #[test]
     fn from_tokens_enum_empty() {
         // An empty enum should be valid, even though there is nothing
         // we can do with it.

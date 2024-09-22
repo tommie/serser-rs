@@ -30,15 +30,23 @@ impl fmt::Display for WriteError {
 impl std::error::Error for WriteError {}
 impl Error for WriteError {
     fn invalid_token(token: Token<'_>, expected: Option<TokenTypes>) -> Self {
-        WriteError::Token(TokenError::InvalidToken(token.into(), expected))
+        WriteError::Token(TokenError::invalid_token(token, expected))
+    }
+
+    fn invalid_field(field: &str) -> Self {
+        WriteError::Token(TokenError::invalid_field(field))
+    }
+
+    fn missing_fields(fields: &[&str]) -> Self {
+        WriteError::Token(TokenError::missing_fields(fields))
     }
 
     fn invalid_variant(variant: EnumVariant<'_>) -> Self {
-        WriteError::Token(TokenError::InvalidVariant(variant.into()))
+        WriteError::Token(TokenError::invalid_variant(variant))
     }
 
     fn unexpected_end(expected: Option<TokenTypes>) -> Self {
-        WriteError::Token(TokenError::UnexpectedEnd(expected))
+        WriteError::Token(TokenError::unexpected_end(expected))
     }
 }
 
