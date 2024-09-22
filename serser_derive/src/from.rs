@@ -19,7 +19,20 @@ pub(crate) fn from_tokens(input: &DeriveInput) -> Result<TokenStream, Error> {
 fn from_tokens_struct(data: &syn::DataStruct, input: &DeriveInput) -> Result<TokenStream, Error> {
     match &data.fields {
         syn::Fields::Named(fields) => from_tokens_struct_named(fields, input),
-        _ => todo!(),
+        syn::Fields::Unnamed(fields) => from_tokens_struct_unnamed(fields, input),
+        syn::Fields::Unit => from_tokens_struct_unnamed(
+            &syn::FieldsUnnamed {
+                paren_token: syn::token::Paren {
+                    span: proc_macro2::Group::new(
+                        proc_macro2::Delimiter::None,
+                        proc_macro2::TokenStream::new(),
+                    )
+                    .delim_span(),
+                },
+                unnamed: syn::punctuated::Punctuated::new(),
+            },
+            input,
+        ),
     }
 }
 
@@ -238,6 +251,181 @@ fn from_tokens_struct_named(
                     Some(Self {
                         #(#from_sink_fields),*
                     })
+                } else {
+                    None
+                }
+            }
+
+            fn expect_initial() -> Option<::serser::token::TokenTypes> {
+                Some(::serser::token::TokenTypes::new(::serser::token::TokenType::Enum))
+            }
+        }
+    }
+    .into())
+}
+
+fn from_tokens_struct_unnamed(
+    fields: &syn::FieldsUnnamed,
+    input: &DeriveInput,
+) -> Result<TokenStream, Error> {
+    let generics_params = &input.generics.params;
+    let where_clause = &input.generics.where_clause;
+    let ident = &input.ident;
+    let sink_ident = format_ident!("{}SerSerTokenSink", ident);
+    let sink_fields = fields
+        .unnamed
+        .iter()
+        .enumerate()
+        .map(|(i, field)| {
+            let ident = format_ident!("f{}", i);
+            let ty = &field.ty;
+
+            quote! { #ident: Option<#ty> }
+        })
+        .collect::<Vec<_>>();
+    let end_state_matches = fields
+            .unnamed
+            .iter()
+            .enumerate()
+            .map(|(i, field)| {
+                let ident = format_ident!("f{}", i);
+                let ty = &field.ty;
+                let ii = i as isize;
+
+                quote! {
+                    #ii => {
+                        // We created the subsink when we set field = i, so it should be valid.
+                        let cast_subsink = subsink.into_any().downcast::<<#ty as ::serser::FromTokenSink>::Sink>().unwrap();
+                        if let Some(v) = #ty::from_sink(*cast_subsink) {
+                            self.#ident = Some(v);
+                            self.state += 1;
+                            Ok(true)
+                        } else {
+                            unreachable!("subsink yield_token signaled end, but no value is available")
+                        }
+                    }
+                }
+            })
+            .collect::<Vec<_>>();
+    let field_state_matches = fields.unnamed.iter().enumerate().map(|(i, field)| {
+        let ident = format_ident!("f{}", i);
+        let ty = &field.ty;
+        let ii = i as isize;
+
+        quote! {
+            #ii => {
+                let mut subsink = #ty::new_sink();
+
+                if subsink.yield_token(token)? {
+                    self.subsink = Some(Box::new(subsink));
+                } else if let Some(v) = #ty::from_sink(subsink) {
+                    self.#ident = Some(v);
+                    self.state += 1;
+                } else {
+                    unreachable!("subsink yield_token signaled end, but no value is available");
+                }
+                Ok(true)
+            }
+        }
+    });
+    let expect_matches = fields.unnamed.iter().enumerate().map(|(i, field)| {
+        let ty = &field.ty;
+        let ii = i as isize;
+
+        quote! {
+            #ii => <#ty as ::serser::FromTokenSink>::expect_initial(),
+        }
+    });
+    let field_inits = fields.unnamed.iter().enumerate().map(|(i, _)| {
+        let ident = format_ident!("f{}", i);
+
+        quote! { #ident: None }
+    });
+    let num_fields = field_inits.len();
+    let inum_fields = num_fields as isize;
+    let from_sink_fields = fields.unnamed.iter().enumerate().map(|(i, _)| {
+        let ident = format_ident!("f{}", i);
+
+        quote! { sink.#ident.unwrap() }
+    });
+
+    Ok(quote! {
+        struct #sink_ident<#generics_params> {
+            // -2 waits for Tuple, -1 is after EndTuple.
+            state: isize,
+            subsink: Option<Box<dyn ::serser::TokenSink<Error = TokenError>>>,
+            #(#sink_fields),*
+        }
+
+        impl<#generics_params> ::serser::TokenSink for #sink_ident<#generics_params> #where_clause {
+            type Error = TokenError;
+
+            fn yield_token(&mut self, token: Token<'_>) -> Result<bool, Self::Error> {
+                if let Some(subsink) = self.subsink.as_mut() {
+                    let want_more = subsink.yield_token(token)?;
+
+                    if !want_more {
+                        let subsink = self.subsink.take().unwrap();
+
+                        // Empty structs will have only the default arm.
+                        #[allow(unreachable_code)]
+                        return match self.state {
+                            #(#end_state_matches)*
+
+                            _ => unreachable!("FromTokens struct state machine failed"),
+                        };
+                    }
+
+                    return Ok(true);
+                }
+
+                match self.state {
+                    -2 => match token {
+                        ::serser::token::Token::Tuple(_) => {
+                            self.state = 0;
+                            Ok(true)
+                        }
+                        _ => Err(Self::Error::invalid_token(token, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::Tuple)))),
+                    }
+
+                    #(#field_state_matches)*
+
+                    #inum_fields => {
+                        self.state = -1;
+                        Ok(false)
+                    }
+                    _ => Err(Self::Error::invalid_token(token, Some(::serser::token::TokenTypes::EMPTY))),
+                }
+            }
+
+            fn expect_tokens(&mut self) -> Option<TokenTypes> {
+                match self.state {
+                    -2 => Some(::serser::token::TokenTypes::new(::serser::token::TokenType::Tuple)),
+
+                    #(#expect_matches)*
+
+                    #inum_fields => Some(::serser::token::TokenTypes::new(::serser::token::TokenType::EndTuple)),
+                    _ => Some(::serser::token::TokenTypes::EMPTY),
+                }
+            }
+
+            fn into_any(self: Box<Self>) -> Box<dyn std::any::Any> { self as _ }
+        }
+
+        impl<#generics_params> ::serser::FromTokenSink for #ident<#generics_params> #where_clause {
+            type Sink = #sink_ident;
+
+            fn new_sink() -> Self::Sink {
+                Self::Sink {
+                    state: -2,
+                    subsink: None,
+                    #(#field_inits),*
+                }
+            }
+
+            fn from_sink(sink: Self::Sink) -> Option<Self> {
+                if sink.state == -1 {
+                    Some(Self(#(#from_sink_fields),*))
                 } else {
                     None
                 }

@@ -29,10 +29,7 @@ mod tests {
 
         let got = AStruct::from_tokens(TokenVec::from(vec![
             OwningToken::Struct(OwningStructMeta {
-                fields: Some(vec![
-                    "a".to_owned(),
-                    "b".to_owned(),
-                ]),
+                fields: Some(vec!["a".to_owned(), "b".to_owned()]),
             }),
             OwningToken::Field("a".to_owned()),
             OwningToken::Bool(true),
@@ -59,10 +56,7 @@ mod tests {
 
         let got = AnotherStruct::from_tokens(TokenVec::from(vec![
             OwningToken::Struct(OwningStructMeta {
-                fields: Some(vec![
-                    "b".to_owned(),
-                    "c".to_owned(),
-                ]),
+                fields: Some(vec!["b".to_owned(), "c".to_owned()]),
             }),
             OwningToken::Field("b".to_owned()),
             OwningToken::Struct(OwningStructMeta {
@@ -76,10 +70,13 @@ mod tests {
             OwningToken::EndStruct,
         ]))
         .unwrap();
-        assert_eq!(got, AnotherStruct {
-            b: AStruct { a: true },
-            c: 42,
-        });
+        assert_eq!(
+            got,
+            AnotherStruct {
+                b: AStruct { a: true },
+                c: 42,
+            }
+        );
     }
 
     #[test]
@@ -100,6 +97,71 @@ mod tests {
         ]))
         .unwrap_err();
         assert_eq!(got, TokenError::MissingFields(vec!["b".to_owned()]));
+    }
+
+    #[test]
+    fn from_tokens_struct_unit() {
+        #[derive(Debug, Eq, FromTokens, PartialEq)]
+        struct AStruct();
+
+        let got = AStruct::from_tokens(TokenVec::from(vec![
+            OwningToken::Tuple(TupleMeta { size_hint: Some(0) }),
+            OwningToken::EndTuple,
+        ]))
+        .unwrap();
+        assert_eq!(got, AStruct());
+    }
+
+    #[test]
+    fn from_tokens_struct_tuple() {
+        #[derive(Debug, Eq, FromTokens, PartialEq)]
+        struct AStruct(bool, u32);
+
+        let got = AStruct::from_tokens(TokenVec::from(vec![
+            OwningToken::Tuple(TupleMeta { size_hint: Some(0) }),
+            OwningToken::Bool(true),
+            OwningToken::U32(42),
+            OwningToken::EndTuple,
+        ]))
+        .unwrap();
+        assert_eq!(got, AStruct(true, 42));
+    }
+
+    #[test]
+    fn from_tokens_struct_tuple_nested() {
+        #[derive(Debug, Eq, FromTokens, PartialEq)]
+        struct AStruct(bool);
+
+        #[derive(Debug, Eq, FromTokens, PartialEq)]
+        struct AnotherStruct(AStruct, u32);
+
+        let got = AnotherStruct::from_tokens(TokenVec::from(vec![
+            OwningToken::Tuple(TupleMeta { size_hint: Some(2) }),
+            OwningToken::Tuple(TupleMeta { size_hint: Some(1) }),
+            OwningToken::Bool(true),
+            OwningToken::EndTuple,
+            OwningToken::U32(42),
+            OwningToken::EndTuple,
+        ]))
+        .unwrap();
+        assert_eq!(got, AnotherStruct(AStruct(true), 42,));
+    }
+
+    #[test]
+    fn from_tokens_struct_tuple_partial() {
+        #[derive(Debug, Eq, FromTokens, PartialEq)]
+        struct AStruct(bool, u32);
+
+        let got = AStruct::from_tokens(TokenVec::from(vec![
+            OwningToken::Tuple(TupleMeta { size_hint: Some(0) }),
+            OwningToken::Bool(true),
+            OwningToken::EndTuple,
+        ]))
+        .unwrap_err();
+        assert_eq!(
+            got,
+            TokenError::InvalidToken(OwningToken::EndTuple, Some(TokenTypes::new(TokenType::U32)))
+        );
     }
 
     #[test]
