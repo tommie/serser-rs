@@ -16,11 +16,11 @@ pub fn derive_into_tokens(tokens: TokenStream) -> TokenStream {
     }
 }
 
-/// Provides the [FromTokenSink] trait for a struct or enum. This is
+/// Provides the `FromTokenSink` trait for a struct or enum. This is
 /// used to deserialize into Rust data structures.
 ///
 /// The [FromTokens] trait has a blanket implementation that uses
-/// [FromTokenSink].
+/// `FromTokenSink`.
 #[proc_macro_derive(FromTokens)]
 pub fn derive_from_tokens(tokens: TokenStream) -> TokenStream {
     let input = parse_macro_input!(tokens as DeriveInput);
