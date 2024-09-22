@@ -33,9 +33,6 @@ pub trait FromTokenSink: Sized {
 /// This is a convenience wrapper for sinking into a [FromTokenSink]
 /// that is appropriate for the data type, implemented for all types
 /// that have [FromTokenSink].
-///
-/// The primary use of this wrapper is to flatten the outer start/end
-/// tokens.
 pub trait FromTokens: FromTokenSink {
     /// Constructs a Rust value from a token source.
     fn from_tokens<I: IntoTokens>(into: I) -> Result<Self, <Self::Sink as TokenSink>::Error>;
@@ -43,79 +40,11 @@ pub trait FromTokens: FromTokenSink {
 
 impl<T: FromTokenSink> FromTokens for T {
     fn from_tokens<I: IntoTokens>(into: I) -> Result<Self, <Self::Sink as TokenSink>::Error> {
-        let mut sink = FromTokensSink::<T> {
-            sink: Some(Self::new_sink()),
-            value: None,
-        };
+        let mut sink = Self::new_sink();
         into.into_tokens(&mut sink)?;
 
         let expected = sink.expect_tokens();
-        sink.value
-            .ok_or(<Self::Sink as TokenSink>::Error::unexpected_end(expected))
-    }
-}
-
-struct FromTokensSink<T: FromTokenSink> {
-    sink: Option<T::Sink>,
-    value: Option<T>,
-}
-
-impl<T: FromTokenSink> TokenSink for FromTokensSink<T> {
-    type Error = <T::Sink as TokenSink>::Error;
-    type Subsink<'c> = T::Sink where Self: 'c;
-
-    fn yield_start<'b, 'c>(&mut self, token: Token<'b>) -> Result<Self::Subsink<'c>, Self::Error>
-    where
-        Self: 'c,
-    {
-        if let Some(mut inner) = self.sink.take() {
-            inner.yield_token(token)?;
-            Ok(inner)
-        } else {
-            panic!("yield_* called twice");
-        }
-    }
-
-    fn yield_token<'b>(&mut self, token: Token<'b>) -> Result<(), Self::Error> {
-        if let Some(mut inner) = self.sink.take() {
-            inner.yield_token(token)?;
-
-            self.value = T::from_sink(inner);
-
-            Ok(())
-        } else {
-            panic!("yield_* called twice");
-        }
-    }
-
-    fn yield_end<'b>(
-        &mut self,
-        token: Token<'b>,
-        mut sink: Self::Subsink<'b>,
-    ) -> Result<(), Self::Error>
-    where
-        Self: 'b,
-    {
-        if self.value.is_some() {
-            panic!("yield_* called twice");
-        }
-
-        sink.yield_token(token)?;
-
-        self.value = T::from_sink(sink);
-
-        Ok(())
-    }
-
-    fn expect_tokens(&mut self) -> Option<TokenTypes> {
-        if self.value.is_some() {
-            Some(TokenTypes::EMPTY)
-        } else {
-            self.sink
-                .as_mut()
-                .map(|sink| sink.expect_tokens())
-                .flatten()
-        }
+        Self::from_sink(sink).ok_or(<Self::Sink as TokenSink>::Error::unexpected_end(expected))
     }
 }
 
@@ -126,30 +55,15 @@ macro_rules! basic_from_tokens [
         $(
         impl TokenSink for BasicSink<$ty> {
             type Error = TokenError;
-            type Subsink<'c> = Self where Self: 'c;
 
-            fn yield_start<'c, 'd>(&mut self, token: Token<'c>) -> Result<Self::Subsink<'d>, Self::Error> where Self: 'd {
-                Err(Self::Error::invalid_token(token, Some(TokenTypes::new(TokenType::$tt))))
-            }
-
-            fn yield_token<'b>(&mut self, token: Token<'b>) -> Result<(), Self::Error> {
+            fn yield_token(&mut self, token: Token<'_>) -> Result<bool, Self::Error> {
                 match token {
                     Token::$tt(v) => {
                         self.0 = Some(v.into());
-                        Ok(())
+                        Ok(false)
                     }
                     t => Err(Self::Error::invalid_token(t, Some(TokenTypes::new(TokenType::$tt)))),
                 }
-            }
-
-            fn yield_end<'b>(
-                &mut self,
-                token: Token<'b>,
-                _sink: Self::Subsink<'b>,
-            ) -> Result<(), Self::Error>
-            where
-                Self: 'b {
-                Err(Self::Error::invalid_token(token, Some(TokenTypes::new(TokenType::$tt))))
             }
 
             fn expect_tokens(&mut self) -> Option<TokenTypes> {
@@ -201,31 +115,34 @@ basic_from_tokens![
 pub struct VecSink<T: FromTokenSink> {
     out: Option<Vec<T>>,
     is_bytes: bool,
+    subsink: Option<T::Sink>,
 }
 
 impl<T: FromTokenSink> TokenSink for VecSink<T> {
     type Error = <T::Sink as TokenSink>::Error;
-    type Subsink<'c> = T::Sink where Self: 'c;
 
-    fn yield_start<'c, 'd>(&mut self, token: Token<'c>) -> Result<Self::Subsink<'d>, Self::Error>
-    where
-        Self: 'd,
-    {
-        let mut sink = T::new_sink();
-        sink.yield_token(token)?;
-        Ok(sink)
-    }
+    fn yield_token(&mut self, token: Token<'_>) -> Result<bool, Self::Error> {
+        if let Some(subsink) = self.subsink.as_mut() {
+            let want_more = subsink.yield_token(token)?;
 
-    fn yield_token<'b>(&mut self, token: Token<'b>) -> Result<(), Self::Error> {
+            if !want_more {
+                if let Some(v) = T::from_sink(self.subsink.take().unwrap()) {
+                    self.out.as_mut().unwrap().push(v);
+                }
+            }
+
+            return Ok(true);
+        }
+
         match token {
-            Token::Seq(meta) => {
+            Token::Seq(meta) if self.out.is_none() => {
                 if let Some(size) = meta.size_hint {
                     self.out = Some(Vec::with_capacity(size));
                 } else {
                     self.out = Some(Vec::new())
                 }
             }
-            Token::EndSeq => {}
+            Token::EndSeq if self.out.is_some() => return Ok(false),
             Token::Bytes(v) if self.is_bytes && self.out.is_none() => {
                 // SAFETY: assuming the is_vec_u8 hack is correct, this is a no-op.
                 let out: &mut Option<Vec<u8>> = unsafe { std::mem::transmute(&mut self.out) };
@@ -239,35 +156,23 @@ impl<T: FromTokenSink> TokenSink for VecSink<T> {
                     ));
                 }
 
-                self.yield_end(t, T::new_sink())?;
+                let mut subsink = T::new_sink();
+                if subsink.yield_token(t)? {
+                    self.subsink = Some(subsink);
+                } else if let Some(v) = T::from_sink(subsink) {
+                    self.out.as_mut().unwrap().push(v);
+                }
             }
         }
 
-        Ok(())
-    }
-
-    fn yield_end<'b>(
-        &mut self,
-        token: Token<'b>,
-        mut sink: Self::Subsink<'b>,
-    ) -> Result<(), Self::Error>
-    where
-        Self: 'b,
-    {
-        sink.yield_token(token)?;
-
-        if let Some(v) = T::from_sink(sink) {
-            if let Some(vec) = self.out.as_mut() {
-                vec.push(v);
-            } else {
-                panic!("No Seq token before element");
-            }
-        }
-
-        Ok(())
+        Ok(true)
     }
 
     fn expect_tokens(&mut self) -> Option<TokenTypes> {
+        if let Some(subsink) = self.subsink.as_mut() {
+            return subsink.expect_tokens();
+        }
+
         match self.out {
             None => Some(TokenTypes::new(TokenType::Seq)),
             Some(_) => T::expect_initial().map(|tt| tt.with(TokenType::EndSeq)),
@@ -282,6 +187,7 @@ impl<T: FromTokenSink> FromTokenSink for Vec<T> {
         VecSink {
             out: None,
             is_bytes: is_vec_u8::<Vec<T>>(),
+            subsink: None,
         }
     }
 

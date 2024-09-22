@@ -3,10 +3,9 @@ use crate::TokenSink;
 
 /// Provides a way to associate appropriate sources with Rust data types.
 pub trait IntoTokens {
-    /// Yields tokens to the sink, one by one. Any start token (see
-    /// [Token::is_start]) must be yielded using
-    /// [TokenSink::yield_start]. Other tokens use
-    /// [TokenSink::yield_token].
+    /// Yields tokens to the sink, one by one. If
+    /// [TokenSink::yield_token] returns false while there are more
+    /// tokens, this function should fail with `invalid_token`.
     fn into_tokens<S: TokenSink>(&self, sink: &mut S) -> Result<(), S::Error>;
 }
 
@@ -90,13 +89,13 @@ where
     T: 'a + IntoTokens,
 {
     let (_, size_hint) = it.size_hint();
-    let mut subsink = sink.yield_start(Token::Seq(SeqMeta { size_hint }))?;
+    sink.yield_token(Token::Seq(SeqMeta { size_hint }))?;
 
     for elem in it {
-        elem.into_tokens(&mut subsink)?;
+        elem.into_tokens(sink)?;
     }
 
-    sink.yield_end(Token::EndSeq, subsink)
+    sink.yield_token(Token::EndSeq).map(|_| ())
 }
 
 impl<'a> IntoTokens for Token<'a> {

@@ -200,8 +200,7 @@ impl Iterator for TypeIter {
 macro_rules! token_is [
     ($ty:ty) => {
         impl<'a> $ty {
-            /// Returns true if this token starts a nested value,
-            /// which indicates the use of [yield_start](crate::TokenSink::yield_start).
+            /// Returns true if this token starts a nested value.
             pub fn is_start(&self) -> bool {
                 match self {
                     Self::Seq(_) => true,

@@ -1,6 +1,4 @@
-use std::cell::RefCell;
 use std::fmt;
-use std::rc::Rc;
 
 use base64::prelude::*;
 
@@ -52,8 +50,9 @@ pub fn json_from_tokens<I: IntoTokens, W: fmt::Write>(
     into: I,
 ) -> Result<(), WriteError> {
     let mut sink = JsonTokenSink {
-        writer: Rc::new(RefCell::new(writer)),
+        writer,
         state: JsonState::Plain,
+        states: Vec::new(),
     };
     into.into_tokens(&mut sink)?;
 
@@ -64,20 +63,22 @@ pub fn json_from_tokens<I: IntoTokens, W: fmt::Write>(
 }
 
 struct JsonTokenSink<W: fmt::Write> {
-    writer: Rc<RefCell<W>>,
+    writer: W,
     state: JsonState,
+    states: Vec<JsonState>,
 }
 
 impl<W: fmt::Write> JsonTokenSink<W> {
     /// Writes the comma or colon as appropriate before a
     /// token. Updates the state.
     fn write_sep(&mut self, token: &Token<'_>) -> Result<(), WriteError> {
-        let mut w = self.writer.borrow_mut();
-
         match self.state {
             JsonState::Plain => self.state = JsonState::Done,
             JsonState::FirstArrayElement => self.state = JsonState::ArrayElement,
-            JsonState::ArrayElement => w.write_str(",").map_err(|err| WriteError::Fmt(err))?,
+            JsonState::ArrayElement => self
+                .writer
+                .write_str(",")
+                .map_err(|err| WriteError::Fmt(err))?,
             JsonState::FirstObjectKey => {
                 match token {
                     Token::Field(_) => {}
@@ -102,23 +103,32 @@ impl<W: fmt::Write> JsonTokenSink<W> {
                     }
                 }
 
-                w.write_str(",").map_err(|err| WriteError::Fmt(err))?;
+                self.writer
+                    .write_str(",")
+                    .map_err(|err| WriteError::Fmt(err))?;
                 self.state = JsonState::ObjectValue;
             }
             JsonState::ObjectValue => {
-                w.write_str(":").map_err(|err| WriteError::Fmt(err))?;
+                self.writer
+                    .write_str(":")
+                    .map_err(|err| WriteError::Fmt(err))?;
                 self.state = JsonState::ObjectKey;
             }
             JsonState::EnumVariant => self.state = JsonState::FirstEnumElement,
             JsonState::FirstEnumElement => self.state = JsonState::EnumElement,
-            JsonState::EnumElement => w.write_str(",").map_err(|err| WriteError::Fmt(err))?,
+            JsonState::EnumElement => self
+                .writer
+                .write_str(",")
+                .map_err(|err| WriteError::Fmt(err))?,
             JsonState::Done => unreachable!(),
         }
 
         Ok(())
     }
 
-    fn write_bytes(w: &mut W, v: &[u8]) -> Result<(), fmt::Error> {
+    fn write_bytes(&mut self, v: &[u8]) -> Result<(), fmt::Error> {
+        let w = &mut self.writer;
+
         w.write_char('"')?;
         w.write_str(BASE64_STANDARD.encode(v).as_str())?;
         w.write_char('"')?;
@@ -126,9 +136,10 @@ impl<W: fmt::Write> JsonTokenSink<W> {
         Ok(())
     }
 
-    fn write_str(w: &mut W, s: &str) -> Result<(), fmt::Error> {
+    fn write_str(&mut self, s: &str) -> Result<(), fmt::Error> {
         let mut start = 0;
         let mut end = 0;
+        let w = &mut self.writer;
 
         w.write_char('"')?;
 
@@ -167,45 +178,8 @@ impl<W: fmt::Write> JsonTokenSink<W> {
 
 impl<W: fmt::Write> TokenSink for JsonTokenSink<W> {
     type Error = WriteError;
-    type Subsink<'c> = Self where Self: 'c;
 
-    fn yield_start<'c, 'd>(&mut self, token: Token<'c>) -> Result<Self::Subsink<'d>, Self::Error>
-    where
-        Self: 'd,
-    {
-        self.write_sep(&token)?;
-
-        let mut w = self.writer.borrow_mut();
-        let state = match token {
-            Token::Seq(_) => JsonState::FirstArrayElement,
-            Token::Tuple(_) => JsonState::FirstArrayElement,
-            Token::Struct(_) => JsonState::FirstObjectKey,
-            Token::Enum(_) => JsonState::EnumVariant,
-            _ => {
-                return Err(WriteError::Token(TokenError::InvalidToken(
-                    token.into(),
-                    None,
-                )))
-            }
-        };
-
-        match state {
-            JsonState::FirstArrayElement => w.write_str("["),
-            JsonState::FirstObjectKey => w.write_str("{"),
-            JsonState::EnumVariant => w.write_str("{"),
-            _ => Ok(()),
-        }
-        .map_err(|err| WriteError::Fmt(err))?;
-
-        // No need to call yield_token.
-
-        Ok(Self {
-            writer: self.writer.clone(),
-            state,
-        })
-    }
-
-    fn yield_token<'b>(&mut self, token: Token<'b>) -> Result<(), Self::Error> {
+    fn yield_token(&mut self, token: Token<'_>) -> Result<bool, Self::Error> {
         if token.is_end() {
             match self.state {
                 JsonState::ObjectValue => {
@@ -228,7 +202,7 @@ impl<W: fmt::Write> TokenSink for JsonTokenSink<W> {
             self.write_sep(&token)?;
         }
 
-        let mut w = self.writer.borrow_mut();
+        let w = &mut self.writer;
 
         match token {
             Token::Unit => w.write_str("null"),
@@ -247,53 +221,75 @@ impl<W: fmt::Write> TokenSink for JsonTokenSink<W> {
             Token::Isize(v) => write!(w, "{}", v),
             Token::F32(v) => write!(w, "{}", v),
             Token::F64(v) => write!(w, "{}", v),
-            Token::Char(v) => Self::write_str(&mut w, v.to_string().as_str()),
-            Token::Bytes(v) => Self::write_bytes(&mut w, v),
-            Token::Str(s) => Self::write_str(&mut w, s),
-            Token::Field(s) => Self::write_str(&mut w, s),
+            Token::Char(v) => self.write_str(v.to_string().as_str()),
+            Token::Bytes(v) => self.write_bytes(v),
+            Token::Str(s) => self.write_str(s),
+            Token::Field(s) => self.write_str(s),
             Token::Variant(EnumVariant::Str(s)) => {
-                Self::write_str(&mut w, s).map_err(|err| WriteError::Fmt(err))?;
-                write!(w, ":[")
+                self.write_str(s).map_err(|err| WriteError::Fmt(err))?;
+                self.writer.write_str(":[")
             }
             Token::Variant(EnumVariant::Usize(i)) => write!(w, "\"{}\":[", i),
 
-            Token::Seq(_) => unreachable!(),
-            Token::Tuple(_) => unreachable!(),
-            Token::Struct(_) => unreachable!(),
-            Token::Enum(_) => unreachable!(),
+            Token::Seq(_) => {
+                self.states.push(std::mem::replace(
+                    &mut self.state,
+                    JsonState::FirstArrayElement,
+                ));
+                w.write_str("[")
+            }
+            Token::Tuple(_) => {
+                self.states.push(std::mem::replace(
+                    &mut self.state,
+                    JsonState::FirstArrayElement,
+                ));
+                w.write_str("[")
+            }
+            Token::Struct(_) => {
+                self.states.push(std::mem::replace(
+                    &mut self.state,
+                    JsonState::FirstObjectKey,
+                ));
+                w.write_str("{")
+            }
+            Token::Enum(_) => {
+                self.states
+                    .push(std::mem::replace(&mut self.state, JsonState::EnumVariant));
+                w.write_str("{")
+            }
 
-            Token::EndSeq => unreachable!(),
-            Token::EndTuple => unreachable!(),
-            Token::EndStruct => unreachable!(),
-            Token::EndEnum => unreachable!(),
+            Token::EndSeq => {
+                self.state = self
+                    .states
+                    .pop()
+                    .ok_or(WriteError::invalid_token(token, Some(TokenTypes::EMPTY)))?;
+                w.write_str("]")
+            }
+            Token::EndTuple => {
+                self.state = self
+                    .states
+                    .pop()
+                    .ok_or(WriteError::invalid_token(token, Some(TokenTypes::EMPTY)))?;
+                w.write_str("]")
+            }
+            Token::EndStruct => {
+                self.state = self
+                    .states
+                    .pop()
+                    .ok_or(WriteError::invalid_token(token, Some(TokenTypes::EMPTY)))?;
+                w.write_str("}")
+            }
+            Token::EndEnum => {
+                self.state = self
+                    .states
+                    .pop()
+                    .ok_or(WriteError::invalid_token(token, Some(TokenTypes::EMPTY)))?;
+                w.write_str("]}")
+            }
         }
         .map_err(|err| WriteError::Fmt(err))?;
 
-        Ok(())
-    }
-
-    fn yield_end<'b>(
-        &mut self,
-        token: Token<'b>,
-        _sink: Self::Subsink<'b>,
-    ) -> Result<(), Self::Error>
-    where
-        Self: 'b,
-    {
-        let mut w = self.writer.borrow_mut();
-
-        // No need to call yield_token.
-
-        match token {
-            Token::EndSeq => w.write_str("]"),
-            Token::EndTuple => w.write_str("]"),
-            Token::EndStruct => w.write_str("}"),
-            Token::EndEnum => w.write_str("]}"),
-            _ => unreachable!(),
-        }
-        .map_err(|err| WriteError::Fmt(err))?;
-
-        Ok(())
+        Ok(true)
     }
 
     fn expect_tokens(&mut self) -> Option<TokenTypes> {

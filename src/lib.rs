@@ -66,49 +66,19 @@ mod vec;
 pub use vec::TokenVec;
 
 /// A receiver of tokens. This forms the basis for a push-parser. The
-/// source side calls [Self::yield_token] for each simple token. For
-/// nested structures, [Self::yield_start] and [Self::end] is called
-/// to handle them.
+/// source side calls [Self::yield_token] for each simple
+/// token. Nested structures are handled by the sink, i.e. any subsink
+/// required to parse a data structure is owned by the parent sink,
+/// which forwards tokens.
 ///
 /// Optionally, [Self::expect_tokens] can be overridden to provide
 /// hints of which token types are acceptable to come next.
 pub trait TokenSink {
     type Error: Error;
-    type Subsink<'c>: TokenSink<Error = Self::Error> + 'c
-    where
-        Self: 'c;
 
-    /// Returns the sink to yield tokens to until the corresponding
-    /// end token. It forwards the token to the subsink's
-    /// [yield_token] (not required if the subsink is of a type known
-    /// not to need it.)
-    ///
-    /// Sinks are encouraged to panic if `!token.is_start()`.
-    fn yield_start<'b, 'c>(&mut self, token: Token<'b>) -> Result<Self::Subsink<'c>, Self::Error>
-    where
-        Self: 'c;
-
-    /// Handles a token from the stream. This may be a start or end
-    /// token, if it's destined for this sink, as opposed to a
-    /// subsink. If so, it is the first and last yielded token,
-    /// respectively.
-    fn yield_token<'b>(&mut self, token: Token<'b>) -> Result<(), Self::Error>;
-
-    /// Called when the subsink from [Self::yield_start] has received
-    /// its last token. It forwards the token to the subsink's
-    /// [yield_token] (not required if the subsink is of a type known
-    /// not to need it.)
-    ///
-    /// It can be used to fetch the final value from `sink`.
-    ///
-    /// Sinks are encouraged to panic if `!token.is_end()`.
-    fn yield_end<'b>(
-        &mut self,
-        token: Token<'b>,
-        sink: Self::Subsink<'b>,
-    ) -> Result<(), Self::Error>
-    where
-        Self: 'b;
+    /// Handles the next token from the stream. Returns true if the
+    /// sink requires more tokens.
+    fn yield_token(&mut self, token: Token<'_>) -> Result<bool, Self::Error>;
 
     /// Returns the set of token types expected next. The
     /// [Self::yield_token] function may accept or refuse any token;

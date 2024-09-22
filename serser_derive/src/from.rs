@@ -58,7 +58,7 @@ fn from_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
         quote! {
             #name_str => {
                 *self = Self::#ident(0, #(#fields),*);
-                Ok(())
+                Ok(true)
             }
         }
     });
@@ -95,7 +95,7 @@ fn from_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
                             Self::#ident(ref mut i @ #j, #(#field_params),*) => {
                                 *#fident = Some(#ty::from_tokens(token)?);
                                 *i += 1;
-                                Ok(())
+                                Ok(true)
                             }
                         }
                     })
@@ -118,7 +118,7 @@ fn from_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
                 #(#field_matches)*
 
                 Self::#ident(#num_fields, #(#field_placeholders),*) => match token {
-                    ::serser::token::Token::EndEnum => Ok(()),
+                    ::serser::token::Token::EndEnum => Ok(false),
                     _ => Err(Self::Error::invalid_token(token, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::EndEnum)))),
                 }
             }
@@ -211,21 +211,13 @@ fn from_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
 
         impl<#generics_params> ::serser::TokenSink for #sink_ident<#generics_params> #where_clause {
             type Error = TokenError;
-            type Subsink<'c> = Self where Self: 'c;
 
-            fn yield_start<'b, 'c>(&mut self, token: Token<'b>) -> Result<Self::Subsink<'c>, Self::Error>
-            where
-                Self: 'c,
-            {
-                todo!()
-            }
-
-            fn yield_token<'b>(&mut self, token: Token<'b>) -> Result<(), Self::Error> {
+            fn yield_token(&mut self, token: Token<'_>) -> Result<bool, Self::Error> {
                 match self {
                     Self::Unknown => match token {
                         ::serser::token::Token::Enum(_) => {
                             *self = Self::Start;
-                            Ok(())
+                            Ok(true)
                         }
                         _ => Err(Self::Error::invalid_token(token, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::Enum)))),
                     }
@@ -242,17 +234,6 @@ fn from_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
 
                     _ => Err(Self::Error::invalid_token(token, None)),
                 }
-            }
-
-            fn yield_end<'b>(
-                &mut self,
-                token: Token<'b>,
-                mut sink: Self::Subsink<'b>,
-            ) -> Result<(), Self::Error>
-            where
-                Self: 'b,
-            {
-                todo!()
             }
 
             fn expect_tokens(&mut self) -> Option<TokenTypes> {

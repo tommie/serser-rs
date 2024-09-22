@@ -77,7 +77,7 @@ fn into_tokens_struct(data: &syn::DataStruct, input: &DeriveInput) -> Result<Tok
                     index: i as u32,
                     span: proc_macro2::Span::call_site(),
                 });
-                quote! { self.#ident.into_tokens(&mut subsink)?; }
+                quote! { self.#ident.into_tokens(sink)?; }
             })
             .collect::<Vec<_>>(),
         syn::Fields::Unit => vec![],
@@ -88,11 +88,11 @@ fn into_tokens_struct(data: &syn::DataStruct, input: &DeriveInput) -> Result<Tok
             fn into_tokens<S: ::serser::TokenSink>(&self, sink: &mut S) -> Result<(), S::Error> {
                 use ::serser::IntoTokens;
 
-                let mut subsink = sink.yield_start(#start_token)?;
+                sink.yield_token(#start_token)?;
 
                 #(#yield_fields)*
 
-                sink.yield_end(#end_token, subsink)
+                sink.yield_token(#end_token).map(|_| ())
             }
         }
     }
@@ -107,8 +107,8 @@ fn yield_field(field: &syn::Field) -> Result<proc_macro2::TokenStream, Error> {
     );
 
     Ok(quote! {
-        subsink.yield_token(::serser::token::Token::Field(#name_str))?;
-        self.#ident.into_tokens(&mut subsink)?;
+        sink.yield_token(::serser::token::Token::Field(#name_str))?;
+        self.#ident.into_tokens(sink)?;
     })
 }
 
@@ -171,7 +171,7 @@ fn into_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
             };
             let yields = fields
                 .iter()
-                .map(|ident| quote! { #ident.into_tokens(&mut subsink)?; })
+                .map(|ident| quote! { #ident.into_tokens(sink)?; })
                 .collect::<Vec<_>>();
 
             quote! {
@@ -187,9 +187,8 @@ fn into_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
             fn into_tokens<S: ::serser::TokenSink>(&self, sink: &mut S) -> Result<(), S::Error> {
                 use ::serser::IntoTokens;
 
-                let mut subsink = sink.yield_start(::serser::token::Token::Enum(EnumMeta { variants: Some(&[#(::serser::token::EnumVariant::Str(#variants)),*]) }))?;
-
-                subsink.yield_token(::serser::token::Token::Variant(::serser::token::EnumVariant::Str(match self {
+                sink.yield_token(::serser::token::Token::Enum(EnumMeta { variants: Some(&[#(::serser::token::EnumVariant::Str(#variants)),*]) }))?;
+                sink.yield_token(::serser::token::Token::Variant(::serser::token::EnumVariant::Str(match self {
                     #(#variant_names)*
                 })))?;
 
@@ -197,7 +196,7 @@ fn into_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
                     #(#yield_fields)*
                 }
 
-                sink.yield_end(::serser::token::Token::EndEnum, subsink)
+                sink.yield_token(::serser::token::Token::EndEnum).map(|_| ())
             }
         }
     }
