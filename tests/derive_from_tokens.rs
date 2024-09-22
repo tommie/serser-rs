@@ -186,6 +186,7 @@ mod tests {
                 OwningEnumVariant::Str("B".to_string()),
                 OwningEnumVariant::Str("C".to_string()),
             ]),
+            kind: None,
         };
 
         let cases = vec![
@@ -202,7 +203,9 @@ mod tests {
                 vec![
                     OwningToken::Enum(meta.clone()),
                     OwningToken::Variant(OwningEnumVariant::Str("B".to_owned())),
+                    OwningToken::Tuple(TupleMeta { size_hint: Some(1) }),
                     OwningToken::U32(42),
+                    OwningToken::EndTuple,
                     OwningToken::EndEnum,
                 ],
             ),
@@ -211,8 +214,10 @@ mod tests {
                 vec![
                     OwningToken::Enum(meta.clone()),
                     OwningToken::Variant(OwningEnumVariant::Str("C".to_owned())),
+                    OwningToken::Tuple(TupleMeta { size_hint: Some(2) }),
                     OwningToken::Bool(true),
                     OwningToken::U32(42),
+                    OwningToken::EndTuple,
                     OwningToken::EndEnum,
                 ],
             ),
@@ -240,14 +245,20 @@ mod tests {
             vec![
                 OwningToken::Enum(OwningEnumMeta {
                     variants: Some(vec![OwningEnumVariant::Str("B".to_string())]),
+                    kind: None,
                 }),
                 OwningToken::Variant(OwningEnumVariant::Str("B".to_owned())),
+                OwningToken::Tuple(TupleMeta { size_hint: Some(1) }),
                 OwningToken::Enum(OwningEnumMeta {
                     variants: Some(vec![OwningEnumVariant::Str("A".to_string())]),
+                    kind: None,
                 }),
                 OwningToken::Variant(OwningEnumVariant::Str("A".to_owned())),
+                OwningToken::Tuple(TupleMeta { size_hint: Some(1) }),
                 OwningToken::Bool(true),
+                OwningToken::EndTuple,
                 OwningToken::EndEnum,
+                OwningToken::EndTuple,
                 OwningToken::EndEnum,
             ],
         )];

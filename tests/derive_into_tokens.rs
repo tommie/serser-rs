@@ -179,6 +179,7 @@ mod tests {
                 OwningEnumVariant::Str("B".to_string()),
                 OwningEnumVariant::Str("C".to_string()),
             ]),
+            kind: Some(EnumKind::Tuple),
         };
 
         let cases = vec![
@@ -195,7 +196,9 @@ mod tests {
                 vec![
                     OwningToken::Enum(meta.clone()),
                     OwningToken::Variant(OwningEnumVariant::Str("B".to_owned())),
+                    OwningToken::Tuple(TupleMeta { size_hint: Some(1) }),
                     OwningToken::U32(42),
+                    OwningToken::EndTuple,
                     OwningToken::EndEnum,
                 ],
             ),
@@ -204,8 +207,10 @@ mod tests {
                 vec![
                     OwningToken::Enum(meta.clone()),
                     OwningToken::Variant(OwningEnumVariant::Str("C".to_owned())),
+                    OwningToken::Tuple(TupleMeta { size_hint: Some(2) }),
                     OwningToken::Bool(true),
                     OwningToken::U32(42),
+                    OwningToken::EndTuple,
                     OwningToken::EndEnum,
                 ],
             ),

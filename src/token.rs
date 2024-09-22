@@ -393,12 +393,20 @@ impl<'a> From<&'a OwningStructMeta> for StructMeta<'a> {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EnumMeta<'a> {
     pub variants: Option<&'a [EnumVariant<'a>]>,
+    pub kind: Option<EnumKind>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EnumKind {
+    Tuple,
+    Struct,
 }
 
 /// Metadata (owned variant) about a structure of named fields.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OwningEnumMeta {
     pub variants: Option<Vec<OwningEnumVariant>>,
+    pub kind: Option<EnumKind>,
 }
 
 impl<'a> From<EnumMeta<'a>> for OwningEnumMeta {
@@ -407,14 +415,16 @@ impl<'a> From<EnumMeta<'a>> for OwningEnumMeta {
             variants: v
                 .variants
                 .map(|variants| variants.into_iter().map(|name| name.into()).collect()),
+            kind: v.kind,
         }
     }
 }
 
 impl<'a> From<&'a OwningEnumMeta> for EnumMeta<'a> {
-    fn from(_v: &'a OwningEnumMeta) -> Self {
+    fn from(v: &'a OwningEnumMeta) -> Self {
         Self {
             variants: None, // TODO
+            kind: v.kind.clone(),
         }
     }
 }

@@ -45,8 +45,11 @@ fn parse_any<'b, S: TokenSink>(
             Some('\n') => {}
             Some('\r') => {}
             Some('{') if expects_enum(sink) => {
-                sink.yield_token(Token::Enum(EnumMeta { variants: None }))
-                    .map_err(|err| ParseError::Sink(err))?;
+                sink.yield_token(Token::Enum(EnumMeta {
+                    variants: None,
+                    kind: None,
+                }))
+                .map_err(|err| ParseError::Sink(err))?;
 
                 json = parse_in_enum_object(sink, &json[1..])?;
                 sink.yield_token(Token::EndEnum)
@@ -169,7 +172,13 @@ fn parse_in_enum_object<'b, S: TokenSink>(
         json = &json[1..];
     }
 
+    sink.yield_token(Token::Tuple(TupleMeta { size_hint: None }))
+        .map_err(|err| ParseError::Sink(err))?;
+
     json = parse_in_array(sink, json)?;
+
+    sink.yield_token(Token::EndTuple)
+        .map_err(|err| ParseError::Sink(err))?;
 
     loop {
         match json.chars().next() {
@@ -752,7 +761,12 @@ mod tests {
 
     #[test]
     fn test_json_into_tokens_enum() {
-        let start = || OwningToken::Enum(OwningEnumMeta { variants: None });
+        let start = || {
+            OwningToken::Enum(OwningEnumMeta {
+                variants: None,
+                kind: None,
+            })
+        };
         let end = || OwningToken::EndEnum;
         let cases = vec![
             (
@@ -760,6 +774,8 @@ mod tests {
                 vec![
                     start(),
                     OwningToken::Variant(OwningEnumVariant::Str("a".to_owned())),
+                    OwningToken::Tuple(TupleMeta { size_hint: None }),
+                    OwningToken::EndTuple,
                     end(),
                 ],
             ),
@@ -768,6 +784,8 @@ mod tests {
                 vec![
                     start(),
                     OwningToken::Variant(OwningEnumVariant::Str("a".to_owned())),
+                    OwningToken::Tuple(TupleMeta { size_hint: None }),
+                    OwningToken::EndTuple,
                     end(),
                 ],
             ),
@@ -776,7 +794,9 @@ mod tests {
                 vec![
                     start(),
                     OwningToken::Variant(OwningEnumVariant::Str("a".to_owned())),
+                    OwningToken::Tuple(TupleMeta { size_hint: None }),
                     OwningToken::Bool(true),
+                    OwningToken::EndTuple,
                     end(),
                 ],
             ),
@@ -785,8 +805,10 @@ mod tests {
                 vec![
                     start(),
                     OwningToken::Variant(OwningEnumVariant::Str("a".to_owned())),
+                    OwningToken::Tuple(TupleMeta { size_hint: None }),
                     OwningToken::Bool(true),
                     OwningToken::Bool(false),
+                    OwningToken::EndTuple,
                     end(),
                 ],
             ),

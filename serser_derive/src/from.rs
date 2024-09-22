@@ -461,7 +461,12 @@ fn from_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
             Vec::new()
         };
 
-        quote! { #ident (usize, #(#fields),*) }
+        // The first value is the current field number.
+        // -1 means waiting for Tuple.
+        // num_fields means waiting for EndTuple.
+        // num_fields+1 means waiting for EndEnum.
+        // num_fields+2 means complete.
+        quote! { #ident (isize, #(#fields),*) }
     });
     let variant_str_matches = data.variants.iter().enumerate().map(|(i, variant)| {
         let ident = format_ident!("V{}", i);
@@ -481,7 +486,7 @@ fn from_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
 
         quote! {
             #name_str => {
-                self.state = #state_ident::#ident(0, #(#fields),*);
+                self.state = #state_ident::#ident(-1, #(#fields),*);
                 Ok(true)
             }
         }
@@ -514,9 +519,10 @@ fn from_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
                     .map(|(j, field)| {
                         let fident = format_ident!("f{}", j);
                         let ty = &field.ty;
+                        let jj = j as isize;
 
                         quote! {
-                            #state_ident::#ident(ref mut i @ #j, #(#field_params),*) => {
+                            #state_ident::#ident(ref mut i @ #jj, #(#field_params),*) => {
                                 // We created the subsink when we set i = j, so it should be valid.
                                 let cast_subsink = subsink.into_any().downcast::<<#ty as ::serser::FromTokenSink>::Sink>().unwrap();
                                 if let Some(v) = #ty::from_sink(*cast_subsink) {
@@ -566,9 +572,10 @@ fn from_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
                     .map(|(j, field)| {
                         let fident = format_ident!("f{}", j);
                         let ty = &field.ty;
+                        let jj = j as isize;
 
                         quote! {
-                            #state_ident::#ident(ref mut i @ #j, #(#field_params),*) => {
+                            #state_ident::#ident(ref mut i @ #jj, #(#field_params),*) => {
                                 let mut subsink = #ty::new_sink();
 
                                 if subsink.yield_token(token)? {
@@ -596,13 +603,36 @@ fn from_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
             } else {
                 Vec::new()
             };
-            let num_fields = field_placeholders.len();
+            let num_fields = field_placeholders.len() as isize;
+            let end_tuple = num_fields + 1;
 
             quote! {
+                #state_ident::#ident(ref mut i @ -1, #(#field_placeholders),*) => match token {
+                    ::serser::token::Token::Tuple(_) => {
+                        *i = 0;
+                        Ok(true)
+                    }
+                    ::serser::token::Token::EndEnum if #num_fields == 0 => {
+                        *i = 2;
+                        Ok(false)
+                    }
+                    t => Err(Self::Error::invalid_token(t, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::Tuple)))),
+                }
+
                 #(#field_matches)*
 
-                #state_ident::#ident(#num_fields, #(#field_placeholders),*) => match token {
-                    ::serser::token::Token::EndEnum => Ok(false),
+                #state_ident::#ident(ref mut i @ #num_fields, #(#field_placeholders),*) => match token {
+                    ::serser::token::Token::EndTuple => {
+                        *i += 1;
+                        Ok(true)
+                    }
+                    t => Err(Self::Error::invalid_token(t, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::EndTuple)))),
+                }
+                #state_ident::#ident(ref mut i @ #end_tuple, #(#field_placeholders),*) => match token {
+                    ::serser::token::Token::EndEnum => {
+                        *i += 1;
+                        Ok(false)
+                    }
                     t => Err(Self::Error::invalid_token(t, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::EndEnum)))),
                 }
             }
@@ -629,18 +659,27 @@ fn from_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
                     .enumerate()
                     .map(|(j, field)| {
                         let ty = &field.ty;
+                        let jj = j as isize;
 
                         quote! {
-                            #state_ident::#ident(#j, #(#field_placeholders),*) => <#ty as ::serser::FromTokenSink>::expect_initial(),
+                            #state_ident::#ident(#jj, #(#field_placeholders),*) => <#ty as ::serser::FromTokenSink>::expect_initial(),
                         }
                     })
                     .collect::<Vec<_>>()
             } else {
                 Vec::new()
             };
+            let num_fields = field_placeholders.len() as isize;
+            let end_tuple = num_fields + 1;
+            let end_enum = num_fields + 2;
 
             // End-of-fields is handled by the common _ match.
-            quote! { #(#field_matches)* }
+            quote! {
+                #(#field_matches)*
+
+                #state_ident::#ident(#end_tuple, #(#field_placeholders),*) => Some(::serser::token::TokenTypes::new(::serser::token::TokenType::EndTuple)),
+                #state_ident::#ident(#end_enum, #(#field_placeholders),*) => Some(::serser::token::TokenTypes::new(::serser::token::TokenType::EndEnum)),
+            }
         });
     let variant_from_sink_matches = data
         .variants
@@ -673,15 +712,16 @@ fn from_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
             } else {
                 Vec::new()
             };
-            let num_fields = field_params.len();
+            let num_fields = field_params.len() as isize;
+            let end_enum = num_fields + 2;
 
             if num_fields == 0 {
                 quote! {
-                    #state_ident::#ident(#num_fields) => Some(Self::#orig_ident),
+                    #state_ident::#ident(#end_enum) => Some(Self::#orig_ident),
                 }
             } else {
                 quote! {
-                    #state_ident::#ident(#num_fields, #(#field_params),*) => Some(Self::#orig_ident(#(#field_args),*)),
+                    #state_ident::#ident(#end_enum, #(#field_params),*) => Some(Self::#orig_ident(#(#field_args),*)),
                 }
             }
         });
@@ -690,6 +730,7 @@ fn from_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
         enum #state_ident<#generics_params> {
             Unknown,
             Start,
+            Kind,
             #(#sink_variants),*
         }
 
@@ -720,6 +761,7 @@ fn from_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
                     return Ok(true);
                 }
 
+                println!("q {:?}", token);
                 match self.state {
                     #state_ident::Unknown => match token {
                         ::serser::token::Token::Enum(_) => {
@@ -747,6 +789,7 @@ fn from_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
                 match self.state {
                     #state_ident::Unknown => Some(::serser::token::TokenTypes::new(::serser::token::TokenType::Enum)),
                     #state_ident::Start => Some(::serser::token::TokenTypes::new(::serser::token::TokenType::Variant)),
+                    #state_ident::Kind => Some(::serser::token::TokenTypes::new(::serser::token::TokenType::Tuple)),
                     #(#expect_matches)*
                     _ => Some(::serser::token::TokenTypes::EMPTY),
                 }

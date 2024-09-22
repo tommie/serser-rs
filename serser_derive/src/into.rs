@@ -169,14 +169,26 @@ fn into_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
             } else {
                 quote! { (#(#fields),*) }
             };
-            let yields = fields
-                .iter()
-                .map(|ident| quote! { #ident.into_tokens(sink)?; })
-                .collect::<Vec<_>>();
 
-            quote! {
-                Self::#ident #captures => {
-                    #(#yields)*
+            if fields.is_empty() {
+                quote! {
+                    Self::#ident #captures => {}
+                }
+            } else {
+                let num_fields = fields.len();
+                let yields = fields
+                    .iter()
+                    .map(|ident| quote! { #ident.into_tokens(sink)?; })
+                    .collect::<Vec<_>>();
+
+                quote! {
+                    Self::#ident #captures => {
+                        sink.yield_token(::serser::token::Token::Tuple(TupleMeta {
+                            size_hint: Some(#num_fields),
+                        }))?;
+                        #(#yields)*
+                        sink.yield_token(::serser::token::Token::EndTuple)?;
+                    }
                 }
             }
         })
@@ -187,7 +199,10 @@ fn into_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
             fn into_tokens<S: ::serser::TokenSink>(&self, sink: &mut S) -> Result<(), S::Error> {
                 use ::serser::IntoTokens;
 
-                sink.yield_token(::serser::token::Token::Enum(EnumMeta { variants: Some(&[#(::serser::token::EnumVariant::Str(#variants)),*]) }))?;
+                sink.yield_token(::serser::token::Token::Enum(EnumMeta {
+                    variants: Some(&[#(::serser::token::EnumVariant::Str(#variants)),*]),
+                    kind: Some(::serser::token::EnumKind::Tuple),
+                }))?;
                 sink.yield_token(::serser::token::Token::Variant(::serser::token::EnumVariant::Str(match self {
                     #(#variant_names)*
                 })))?;
