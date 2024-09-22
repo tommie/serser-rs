@@ -8,11 +8,6 @@
 //! defacto standard for serialization, both for JSON and as used in
 //! wasm-bindgen for communicating with the host from WebAssembly.
 //!
-//! The name comes from the idea that serialization and
-//! deserialization are fundamentally the same thing, just switching
-//! perspectives of the source and sink. It is a conversion from one
-//! representation to another, through a common data model.
-//!
 //! This crate aims to improve on the serde design in these ways:
 //!
 //! * A smaller API, making it easier to write custom (de)serializers.
@@ -35,6 +30,11 @@
 //!
 //! The aim is for the implementation to be on a par with serde in
 //! terms of performance.
+//!
+//! The name serser comes from the idea that serialization and
+//! deserialization are fundamentally the same thing, just switching
+//! perspectives of the source and sink. It is a conversion from one
+//! representation to another, through a common data model.
 
 use crate::token::*;
 
