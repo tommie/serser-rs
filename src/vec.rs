@@ -62,6 +62,8 @@ impl TokenSink for TokenVec {
 
         Ok(self.level > 0)
     }
+
+    fn into_any(self: Box<Self>) -> Box<dyn std::any::Any> { self as _ }
 }
 
 impl<'a> IntoTokens for TokenVec {

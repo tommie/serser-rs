@@ -63,4 +63,38 @@ mod tests {
             assert_eq!(got, want);
         }
     }
+
+    #[test]
+    fn from_tokens_enum_nested() {
+        #[derive(Debug, Eq, FromTokens, PartialEq)]
+        enum AnEnum {
+            A(bool),
+        }
+        #[derive(Debug, Eq, FromTokens, PartialEq)]
+        enum AnotherEnum {
+            B(AnEnum),
+        }
+
+        let cases = vec![(
+            AnotherEnum::B(AnEnum::A(true)),
+            vec![
+                OwningToken::Enum(OwningEnumMeta {
+                    variants: Some(vec![OwningEnumVariant::Str("B".to_string())]),
+                }),
+                OwningToken::Variant(OwningEnumVariant::Str("B".to_owned())),
+                OwningToken::Enum(OwningEnumMeta {
+                    variants: Some(vec![OwningEnumVariant::Str("A".to_string())]),
+                }),
+                OwningToken::Variant(OwningEnumVariant::Str("A".to_owned())),
+                OwningToken::Bool(true),
+                OwningToken::EndEnum,
+                OwningToken::EndEnum,
+            ],
+        )];
+
+        for (want, input) in cases {
+            let got = AnotherEnum::from_tokens(TokenVec::from(input)).unwrap();
+            assert_eq!(got, want);
+        }
+    }
 }

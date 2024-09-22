@@ -93,6 +93,20 @@ pub trait TokenSink {
     fn expect_tokens(&mut self) -> Option<TokenTypes> {
         None
     }
+
+    /// Converts the boxed sink into a boxed Any. This is used in the
+    /// FromTokens derive macro to support dynamic dispatch for fields
+    /// and variants. It only needs to be overridden for types where
+    /// [Self::yield_token] returns true.
+    ///
+    /// Because `Any: 'static`, implementations using generics will
+    /// have to require that all generic types are `'static`. This
+    /// isn't a problem for sinks for normal types, but intercepting
+    /// sinks, like [test::PrintingTokenSink] will be difficult to use
+    /// with dynamic dispatching (i.e. from generated code.)
+    fn into_any(self: Box<Self>) -> Box<dyn std::any::Any> {
+        unimplemented!("into_any is not implemented for this type")
+    }
 }
 
 /// Uses [FromTokens] and [IntoTokens] to port from source to sink,

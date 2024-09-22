@@ -72,6 +72,8 @@ macro_rules! basic_from_tokens [
                     Some(_) => Some(TokenTypes::EMPTY),
                 }
             }
+
+            fn into_any(self: Box<Self>) -> Box<dyn std::any::Any> { self as _ }
         }
 
         impl FromTokenSink for $ty {
