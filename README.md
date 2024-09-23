@@ -1,6 +1,10 @@
 # Serser – the Rust serialization engine
 
-serser is a serialization/deserialization framework for Rust.
+[![crates.io](https://img.shields.io/crates/v/serser)](https://crates.io/crates/serser)
+[![docs.rs](https://img.shields.io/badge/serser-66c2a5?style=flat&logo=docsdotrs&label=docs.rs)](https://docs.rs/serser)
+[![GitHub last commit](https://img.shields.io/github/last-commit/tommie/serser-rs)](https://github.com/tommie/serser-rs)
+
+serser is a serialization/deserialization framework for [Rust](https://rust-lang.org/).
 It uses a stream of tokens (e.g. U32, Seq, and EndSeq) as the intermediate representation.
 
 ## Examples
@@ -100,3 +104,5 @@ The aim is for the implementation to be on a par with serde in terms of performa
 
 The name serser comes from the idea that serialization and deserialization are fundamentally the same thing, just switching perspectives of the source and sink.
 It is a conversion from one representation to another, through a common data model.
+
+See the [documentation](https://docs.rs/serser) for more information.
