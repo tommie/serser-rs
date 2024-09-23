@@ -86,6 +86,8 @@ pub mod prelude {
 pub mod test;
 pub mod token;
 
+mod utf8read;
+
 mod vec;
 pub use vec::TokenVec;
 

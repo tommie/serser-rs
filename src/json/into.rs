@@ -1,15 +1,22 @@
+use std::io;
 use std::str::FromStr;
 
 use base64::prelude::*;
 
 use crate::token::*;
-use crate::FromTokens;
+use crate::utf8read::CharRead;
+use crate::utf8read::UTF8Read;
 use crate::FromTokenSink;
+use crate::FromTokens;
 use crate::TokenSink;
 
 /// The error returned from [json_into_tokens].
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug)]
+#[non_exhaustive]
 pub enum ParseError<E: crate::error::Error> {
+    /// An error returned by the text reader.
+    Read(io::Error),
+
     /// An error returned by the [TokenSink].
     Sink(E),
 
@@ -27,35 +34,29 @@ pub enum ParseError<E: crate::error::Error> {
 }
 
 /// Parses a JSON string into a token sink.
-pub fn json_into<F: FromTokens>(
-    json: &str,
+pub fn json_into<F: FromTokens, R: io::Read>(
+    r: R,
 ) -> Result<F, ParseError<<<F as FromTokenSink>::Sink as TokenSink>::Error>> {
     let mut sink = F::new_sink();
-    json_into_tokens(&mut sink, json)?;
+    json_into_tokens(&mut sink, r)?;
 
     F::from_sink(sink).ok_or(ParseError::UnexpectedEnd)
 }
 
 /// Parses a JSON string into a token sink.
-pub fn json_into_tokens<S: TokenSink>(
+pub fn json_into_tokens<S: TokenSink, R: io::Read>(
     sink: &mut S,
-    json: &str,
+    r: R,
 ) -> Result<(), ParseError<S::Error>> {
-    parse_any(sink, json)?;
-
-    Ok(())
+    parse_any(sink, &mut UTF8Read::new(r))
 }
 
-fn parse_any<'b, S: TokenSink>(
+fn parse_any<'b, S: TokenSink, R: CharRead>(
     sink: &mut S,
-    mut json: &'b str,
-) -> Result<&'b str, ParseError<S::Error>> {
+    r: &mut R,
+) -> Result<(), ParseError<S::Error>> {
     loop {
-        match json.chars().next() {
-            Some(' ') => {}
-            Some('\t') => {}
-            Some('\n') => {}
-            Some('\r') => {}
+        match read_char_nws(r)? {
             Some('{') if expects_enum(sink) => {
                 sink.yield_token(Token::Enum(EnumMeta {
                     variants: None,
@@ -63,42 +64,40 @@ fn parse_any<'b, S: TokenSink>(
                 }))
                 .map_err(|err| ParseError::Sink(err))?;
 
-                json = parse_in_enum_object(sink, &json[1..])?;
+                parse_in_enum_object(sink, r)?;
                 sink.yield_token(Token::EndEnum)
                     .map_err(|err| ParseError::Sink(err))?;
 
-                return Ok(json);
+                return Ok(());
             }
             Some('{') => {
                 sink.yield_token(Token::Struct(StructMeta { fields: None }))
                     .map_err(|err| ParseError::Sink(err))?;
 
-                json = parse_in_object(sink, &json[1..])?;
+                parse_in_object(sink, r)?;
                 sink.yield_token(Token::EndStruct)
                     .map_err(|err| ParseError::Sink(err))?;
 
-                return Ok(json);
+                return Ok(());
             }
             Some('[') => {
                 let (start, end) = tokens_for_array(sink.expect_tokens());
                 sink.yield_token(start)
                     .map_err(|err| ParseError::Sink(err))?;
 
-                json = parse_in_array(sink, &json[1..])?;
+                parse_in_array(sink, r)?;
                 sink.yield_token(end).map_err(|err| ParseError::Sink(err))?;
 
-                return Ok(json);
+                return Ok(());
             }
-            Some('"') => return parse_in_string(sink, &json[1..], TokenType::Str),
-            Some(c) if c == '-' || c.is_digit(10) => return parse_number(sink, json),
-            Some('f') => return parse_in_false(sink, &json[1..]),
-            Some('t') => return parse_in_true(sink, &json[1..]),
-            Some('n') => return parse_in_null(sink, &json[1..]),
+            Some('"') => return parse_in_string(sink, r, TokenType::Str),
+            Some(c) if c == '-' || c.is_digit(10) => return parse_number(sink, r, c),
+            Some('f') => return parse_in_false(sink, r),
+            Some('t') => return parse_in_true(sink, r),
+            Some('n') => return parse_in_null(sink, r),
             Some(c) => return Err(ParseError::UnexpectedChar(c)),
-            None => return Ok(json),
+            None => return Ok(()),
         }
-
-        json = &json[1..];
     }
 }
 
@@ -127,60 +126,39 @@ fn expects_enum<S: TokenSink>(sink: &mut S) -> bool {
     }
 }
 
-fn parse_in_enum_object<'b, S: TokenSink>(
+fn parse_in_enum_object<'b, S: TokenSink, R: CharRead>(
     sink: &mut S,
-    mut json: &'b str,
-) -> Result<&'b str, ParseError<S::Error>> {
+    r: &mut R,
+) -> Result<(), ParseError<S::Error>> {
     loop {
-        match json.chars().next() {
-            None => return Err(ParseError::UnexpectedEnd),
-            Some(' ') => {}
-            Some('\t') => {}
-            Some('\n') => {}
-            Some('\r') => {}
+        match read_char_nws(r)? {
             Some('"') => {
-                json = &json[1..];
                 break;
             }
             Some(c) => return Err(ParseError::UnexpectedChar(c)),
+            None => return Err(ParseError::UnexpectedEnd),
         }
-
-        json = &json[1..];
     }
 
-    json = parse_in_string(sink, json, TokenType::Variant)?;
+    parse_in_string(sink, r, TokenType::Variant)?;
 
     loop {
-        match json.chars().next() {
-            None => return Err(ParseError::UnexpectedEnd),
-            Some(' ') => {}
-            Some('\t') => {}
-            Some('\n') => {}
-            Some('\r') => {}
+        match read_char_nws(r)? {
             Some(':') => {
-                json = &json[1..];
                 break;
             }
             Some(c) => return Err(ParseError::UnexpectedChar(c)),
+            None => return Err(ParseError::UnexpectedEnd),
         }
-
-        json = &json[1..];
     }
 
     loop {
-        match json.chars().next() {
-            None => return Err(ParseError::UnexpectedEnd),
-            Some(' ') => {}
-            Some('\t') => {}
-            Some('\n') => {}
-            Some('\r') => {}
+        match read_char_nws(r)? {
             Some('[') => {
-                json = &json[1..];
-
                 sink.yield_token(Token::Tuple(TupleMeta { size_hint: None }))
                     .map_err(|err| ParseError::Sink(err))?;
 
-                json = parse_in_array(sink, json)?;
+                parse_in_array(sink, r)?;
 
                 sink.yield_token(Token::EndTuple)
                     .map_err(|err| ParseError::Sink(err))?;
@@ -188,12 +166,10 @@ fn parse_in_enum_object<'b, S: TokenSink>(
                 break;
             }
             Some('{') => {
-                json = &json[1..];
-
                 sink.yield_token(Token::Struct(StructMeta { fields: None }))
                     .map_err(|err| ParseError::Sink(err))?;
 
-                json = parse_in_object(sink, json)?;
+                parse_in_object(sink, r)?;
 
                 sink.yield_token(Token::EndStruct)
                     .map_err(|err| ParseError::Sink(err))?;
@@ -201,159 +177,115 @@ fn parse_in_enum_object<'b, S: TokenSink>(
                 break;
             }
             Some(c) => return Err(ParseError::UnexpectedChar(c)),
+            None => return Err(ParseError::UnexpectedEnd),
         }
-
-        json = &json[1..];
     }
 
     loop {
-        match json.chars().next() {
-            None => return Err(ParseError::UnexpectedEnd),
-            Some(' ') => {}
-            Some('\t') => {}
-            Some('\n') => {}
-            Some('\r') => {}
+        match read_char_nws(r)? {
             Some('}') => {
-                json = &json[1..];
-                return Ok(json);
+                return Ok(());
             }
             Some(c) => return Err(ParseError::UnexpectedChar(c)),
+            None => return Err(ParseError::UnexpectedEnd),
         }
-
-        json = &json[1..];
     }
 }
 
-fn parse_in_object<'b, S: TokenSink>(
+fn parse_in_object<'b, S: TokenSink, R: CharRead>(
     sink: &mut S,
-    mut json: &'b str,
-) -> Result<&'b str, ParseError<S::Error>> {
+    r: &mut R,
+) -> Result<(), ParseError<S::Error>> {
     loop {
         loop {
-            match json.chars().next() {
-                None => return Err(ParseError::UnexpectedEnd),
-                Some(' ') => {}
-                Some('\t') => {}
-                Some('\n') => {}
-                Some('\r') => {}
+            match read_char_nws(r)? {
                 Some('}') => {
-                    json = &json[1..];
-                    return Ok(json);
+                    return Ok(());
                 }
                 Some('"') => {
-                    json = &json[1..];
                     break;
                 }
                 Some(c) => return Err(ParseError::UnexpectedChar(c)),
+                None => return Err(ParseError::UnexpectedEnd),
             }
-
-            json = &json[1..];
         }
 
-        json = parse_in_string(sink, json, TokenType::Field)?;
+        parse_in_string(sink, r, TokenType::Field)?;
 
         loop {
-            match json.chars().next() {
-                None => return Err(ParseError::UnexpectedEnd),
-                Some(' ') => {}
-                Some('\t') => {}
-                Some('\n') => {}
-                Some('\r') => {}
+            match read_char_nws(r)? {
                 Some(':') => {
-                    json = &json[1..];
                     break;
                 }
                 Some(c) => return Err(ParseError::UnexpectedChar(c)),
+                None => return Err(ParseError::UnexpectedEnd),
             }
-
-            json = &json[1..];
         }
 
-        json = parse_any(sink, json)?;
+        parse_any(sink, r)?;
 
         loop {
-            match json.chars().next() {
-                None => return Err(ParseError::UnexpectedEnd),
-                Some(' ') => {}
-                Some('\t') => {}
-                Some('\n') => {}
-                Some('\r') => {}
+            match read_char_nws(r)? {
                 Some(',') => {
-                    json = &json[1..];
                     break;
                 }
                 Some('}') => {
-                    json = &json[1..];
-                    return Ok(json);
+                    return Ok(());
                 }
                 Some(c) => return Err(ParseError::UnexpectedChar(c)),
+                None => return Err(ParseError::UnexpectedEnd),
             }
-
-            json = &json[1..];
         }
     }
 }
 
-fn parse_in_array<'b, S: TokenSink>(
+fn parse_in_array<'b, S: TokenSink, R: CharRead>(
     sink: &mut S,
-    mut json: &'b str,
-) -> Result<&'b str, ParseError<S::Error>> {
+    r: &mut R,
+) -> Result<(), ParseError<S::Error>> {
     loop {
         loop {
-            match json.chars().next() {
-                None => return Err(ParseError::UnexpectedEnd),
-                Some(' ') => {}
-                Some('\t') => {}
-                Some('\n') => {}
-                Some('\r') => {}
+            match read_char_nws(r)? {
                 Some(']') => {
-                    json = &json[1..];
-                    return Ok(json);
+                    return Ok(());
                 }
-                Some(_) => break,
+                Some(c) => {
+                    push_char(r, c)?;
+                    break;
+                }
+                None => return Err(ParseError::UnexpectedEnd),
             }
-
-            json = &json[1..];
         }
 
-        json = parse_any(sink, json)?;
+        parse_any(sink, r)?;
 
         loop {
-            match json.chars().next() {
-                None => return Err(ParseError::UnexpectedEnd),
-                Some(' ') => {}
-                Some('\t') => {}
-                Some('\n') => {}
-                Some('\r') => {}
+            match read_char_nws(r)? {
                 Some(',') => {
-                    json = &json[1..];
                     break;
                 }
                 Some(']') => {
-                    json = &json[1..];
-                    return Ok(json);
+                    return Ok(());
                 }
                 Some(c) => return Err(ParseError::UnexpectedChar(c)),
+                None => return Err(ParseError::UnexpectedEnd),
             }
-
-            json = &json[1..];
         }
     }
 }
 
-fn parse_in_string<'b, S: TokenSink>(
+fn parse_in_string<'b, S: TokenSink, R: CharRead>(
     sink: &mut S,
-    json: &'b str,
+    r: &mut R,
     default_type: TokenType,
-) -> Result<&'b str, ParseError<S::Error>> {
-    let mut n = 0;
+) -> Result<(), ParseError<S::Error>> {
     let mut esc_n = 0; // -1 means single character.
     let mut esc_char = 0;
     let mut out = String::new();
 
-    for c in json.chars() {
-        match c {
-            c if esc_n == -1 => {
+    loop {
+        match read_char(r)? {
+            Some(c) if esc_n == -1 => {
                 esc_n = 0;
                 match c {
                     '"' => out.push(c),
@@ -368,7 +300,7 @@ fn parse_in_string<'b, S: TokenSink>(
                     _ => return Err(ParseError::UnexpectedChar(c)),
                 }
             }
-            c if esc_n > 0 => {
+            Some(c) if esc_n > 0 => {
                 esc_n -= 1;
                 esc_char <<= 4;
                 esc_char |= c.to_digit(0x10).ok_or(ParseError::UnexpectedChar(c))?;
@@ -379,8 +311,7 @@ fn parse_in_string<'b, S: TokenSink>(
                     esc_char = 0;
                 }
             }
-            '"' => {
-                n += c.len_utf8();
+            Some('"') => {
                 match str_token_type(sink.expect_tokens(), default_type) {
                     TokenType::Str => sink.yield_token(Token::Str(out.as_str())),
                     TokenType::Field => sink.yield_token(Token::Field(out.as_str())),
@@ -397,20 +328,17 @@ fn parse_in_string<'b, S: TokenSink>(
                 }
                 .map_err(|err| ParseError::Sink(err))?;
 
-                return Ok(&json[n..]);
+                return Ok(());
             }
-            '\\' => {
+            Some('\\') => {
                 esc_n = -1;
             }
-            c => {
+            Some(c) => {
                 out.push(c);
             }
+            None => return Err(ParseError::UnexpectedEnd),
         }
-
-        n += c.len_utf8();
     }
-
-    Err(ParseError::UnexpectedEnd)
 }
 
 fn str_token_type(expected: Option<TokenTypes>, default_type: TokenType) -> TokenType {
@@ -433,37 +361,35 @@ fn str_token_type(expected: Option<TokenTypes>, default_type: TokenType) -> Toke
     }
 }
 
-fn parse_number<'b, S: TokenSink>(
+fn parse_number<'b, S: TokenSink, R: CharRead>(
     sink: &mut S,
-    json: &'b str,
-) -> Result<&'b str, ParseError<S::Error>> {
-    let mut n = 0;
-    let mut chars = json.chars();
+    r: &mut R,
+    first_char: char,
+) -> Result<(), ParseError<S::Error>> {
+    let mut buf = String::with_capacity(16);
+    buf.push(first_char);
 
-    match chars.next().unwrap() {
-        c if c.is_digit(10) => n += c.len_utf8(),
-        '-' => n += 1,
-        c => return Err(ParseError::UnexpectedChar(c)),
-    }
-
-    for c in chars {
+    loop {
+        let c = read_char(r)?;
         match c {
-            c if c.is_digit(10) => n += c.len_utf8(),
-            '.' => n += 1,
-            'e' => n += 1,
-            'E' => n += 1,
-            '+' => n += 1,
-            '-' => n += 1,
-            _ => break,
+            Some(c) if c.is_digit(10) => {}
+            Some('.' | 'e' | 'E' | '+' | '-') => {}
+            Some(c) => {
+                push_char(r, c)?;
+                break;
+            }
+            None => break,
         }
+
+        buf.push(c.unwrap());
     }
 
     let token = sink.expect_tokens();
 
-    sink.yield_token(as_number_token(&json[..n], token)?)
+    sink.yield_token(as_number_token(buf.as_str(), token)?)
         .map_err(|err| ParseError::Sink(err))?;
 
-    Ok(&json[n..])
+    Ok(())
 }
 
 fn as_number_token<'b, E: crate::error::Error>(
@@ -499,89 +425,109 @@ fn as_number_token<'b, E: crate::error::Error>(
     Ok(Token::F64(v))
 }
 
-fn parse_in_false<'b, S: TokenSink>(
+fn parse_in_false<'b, S: TokenSink, R: CharRead>(
     sink: &mut S,
-    json: &'b str,
-) -> Result<&'b str, ParseError<S::Error>> {
-    if json.starts_with("alse") {
-        sink.yield_token(Token::Bool(false))
-            .map_err(|err| ParseError::Sink(err))?;
+    r: &mut R,
+) -> Result<(), ParseError<S::Error>> {
+    read_match(r, "alse")?;
 
-        Ok(&json[4..])
-    } else if let Some(c) = json.chars().next() {
-        Err(ParseError::UnexpectedChar(c))
-    } else {
-        Err(ParseError::UnexpectedEnd)
-    }
+    sink.yield_token(Token::Bool(false))
+        .map_err(|err| ParseError::Sink(err))?;
+
+    Ok(())
 }
 
-fn parse_in_true<'b, S: TokenSink>(
+fn parse_in_true<'b, S: TokenSink, R: CharRead>(
     sink: &mut S,
-    json: &'b str,
-) -> Result<&'b str, ParseError<S::Error>> {
-    if json.starts_with("rue") {
-        sink.yield_token(Token::Bool(true))
-            .map_err(|err| ParseError::Sink(err))?;
+    r: &mut R,
+) -> Result<(), ParseError<S::Error>> {
+    read_match(r, "rue")?;
 
-        Ok(&json[3..])
-    } else if let Some(c) = json.chars().next() {
-        Err(ParseError::UnexpectedChar(c))
-    } else {
-        Err(ParseError::UnexpectedEnd)
-    }
+    sink.yield_token(Token::Bool(true))
+        .map_err(|err| ParseError::Sink(err))?;
+
+    Ok(())
 }
 
-fn parse_in_null<'b, S: TokenSink>(
+fn parse_in_null<'b, S: TokenSink, R: CharRead>(
     sink: &mut S,
-    json: &'b str,
-) -> Result<&'b str, ParseError<S::Error>> {
-    if json.starts_with("ull") {
-        let tt = if let Some(tts) = sink.expect_tokens() {
-            if tts.contains(TokenType::Seq) {
-                TokenType::Seq
-            } else if tts.contains(TokenType::Tuple) {
-                TokenType::Tuple
-            } else if tts.contains(TokenType::Struct) {
-                TokenType::Struct
-            } else {
-                TokenType::Unit
-            }
+    r: &mut R,
+) -> Result<(), ParseError<S::Error>> {
+    read_match(r, "ull")?;
+
+    let tt = if let Some(tts) = sink.expect_tokens() {
+        if tts.contains(TokenType::Seq) {
+            TokenType::Seq
+        } else if tts.contains(TokenType::Tuple) {
+            TokenType::Tuple
+        } else if tts.contains(TokenType::Struct) {
+            TokenType::Struct
         } else {
             TokenType::Unit
-        };
-
-        match tt {
-            TokenType::Unit => {
-                sink.yield_token(Token::Unit)
-                    .map_err(|err| ParseError::Sink(err))?;
-            }
-            TokenType::Seq => {
-                sink.yield_token(Token::Seq(SeqMeta { size_hint: None }))
-                    .map_err(|err| ParseError::Sink(err))?;
-                sink.yield_token(Token::EndSeq)
-                    .map_err(|err| ParseError::Sink(err))?;
-            }
-            TokenType::Struct => {
-                sink.yield_token(Token::Struct(StructMeta { fields: None }))
-                    .map_err(|err| ParseError::Sink(err))?;
-                sink.yield_token(Token::EndStruct)
-                    .map_err(|err| ParseError::Sink(err))?;
-            }
-            TokenType::Tuple => {
-                sink.yield_token(Token::Tuple(TupleMeta { size_hint: None }))
-                    .map_err(|err| ParseError::Sink(err))?;
-                sink.yield_token(Token::EndTuple)
-                    .map_err(|err| ParseError::Sink(err))?;
-            }
-            _ => unreachable!(),
         }
-
-        Ok(&json[3..])
-    } else if let Some(c) = json.chars().next() {
-        Err(ParseError::UnexpectedChar(c))
     } else {
-        Err(ParseError::UnexpectedEnd)
+        TokenType::Unit
+    };
+
+    match tt {
+        TokenType::Unit => {
+            sink.yield_token(Token::Unit)
+                .map_err(|err| ParseError::Sink(err))?;
+        }
+        TokenType::Seq => {
+            sink.yield_token(Token::Seq(SeqMeta { size_hint: None }))
+                .map_err(|err| ParseError::Sink(err))?;
+            sink.yield_token(Token::EndSeq)
+                .map_err(|err| ParseError::Sink(err))?;
+        }
+        TokenType::Struct => {
+            sink.yield_token(Token::Struct(StructMeta { fields: None }))
+                .map_err(|err| ParseError::Sink(err))?;
+            sink.yield_token(Token::EndStruct)
+                .map_err(|err| ParseError::Sink(err))?;
+        }
+        TokenType::Tuple => {
+            sink.yield_token(Token::Tuple(TupleMeta { size_hint: None }))
+                .map_err(|err| ParseError::Sink(err))?;
+            sink.yield_token(Token::EndTuple)
+                .map_err(|err| ParseError::Sink(err))?;
+        }
+        _ => unreachable!(),
     }
+
+    Ok(())
+}
+
+fn read_char_nws<R: CharRead, E: crate::error::Error>(
+    r: &mut R,
+) -> Result<Option<char>, ParseError<E>> {
+    loop {
+        match read_char(r)? {
+            Some(' ') => {}
+            Some('\t') => {}
+            Some('\n') => {}
+            Some('\r') => {}
+            Some(c) => return Ok(Some(c)),
+            None => return Ok(None),
+        }
+    }
+}
+
+fn read_char<R: CharRead, E: crate::error::Error>(
+    r: &mut R,
+) -> Result<Option<char>, ParseError<E>> {
+    r.read_char().map_err(|err| ParseError::Read(err))
+}
+
+fn read_match<R: CharRead, E: crate::error::Error>(
+    r: &mut R,
+    s: &str,
+) -> Result<(), ParseError<E>> {
+    r.read_match(s).map_err(|err| ParseError::Read(err))
+}
+
+fn push_char<R: CharRead, E: crate::error::Error>(r: &mut R, c: char) -> Result<(), ParseError<E>> {
+    r.push_char(c).map_err(|err| ParseError::Read(err))
 }
 
 #[cfg(test)]
@@ -596,7 +542,7 @@ mod tests {
 
         for json in cases {
             let mut got = TokenVec::new();
-            json_into_tokens(&mut got, json).unwrap();
+            json_into_tokens(&mut got, json.as_bytes()).unwrap();
             assert_eq!(got.into_vec(), vec![]);
         }
     }
@@ -607,7 +553,7 @@ mod tests {
 
         for json in cases {
             let mut got = TokenVec::new();
-            json_into_tokens(&mut got, json).unwrap();
+            json_into_tokens(&mut got, json.as_bytes()).unwrap();
             assert_eq!(got.into_vec(), vec![OwningToken::Unit]);
         }
     }
@@ -618,7 +564,7 @@ mod tests {
 
         for (json, want) in cases {
             let mut got = TokenVec::new();
-            json_into_tokens(&mut got, json).unwrap();
+            json_into_tokens(&mut got, json.as_bytes()).unwrap();
             assert_eq!(got.into_vec(), vec![OwningToken::Bool(want)]);
         }
     }
@@ -639,7 +585,7 @@ mod tests {
 
         for (json, want) in cases {
             let mut got = TokenVec::new();
-            json_into_tokens(&mut got, json).unwrap();
+            json_into_tokens(&mut got, json.as_bytes()).unwrap();
             assert_eq!(got.into_vec(), vec![OwningToken::F64(want)]);
         }
     }
@@ -660,7 +606,7 @@ mod tests {
 
         for (json, want) in cases {
             let mut got = TokenVec::new();
-            json_into_tokens(&mut got, json).unwrap();
+            json_into_tokens(&mut got, json.as_bytes()).unwrap();
             assert_eq!(got.into_vec(), vec![OwningToken::Str(want.to_owned())]);
         }
     }
@@ -673,7 +619,7 @@ mod tests {
             let mut got = TokenVec::new();
             let mut expsink =
                 ExpectingTokenSink::new(&mut got, |_| Some(TokenTypes::new(TokenType::Bytes)));
-            json_into_tokens(&mut expsink, json).unwrap();
+            json_into_tokens(&mut expsink, json.as_bytes()).unwrap();
             assert_eq!(got.into_vec(), vec![OwningToken::Bytes(want.to_owned())]);
         }
     }
@@ -735,7 +681,7 @@ mod tests {
 
         for (json, want) in cases {
             let mut got = TokenVec::new();
-            json_into_tokens(&mut got, json).unwrap();
+            json_into_tokens(&mut got, json.as_bytes()).unwrap();
             assert_eq!(got.into_vec(), want);
         }
     }
@@ -780,7 +726,7 @@ mod tests {
 
         for (json, want) in cases {
             let mut got = TokenVec::new();
-            json_into_tokens(&mut got, json).unwrap();
+            json_into_tokens(&mut got, json.as_bytes()).unwrap();
             assert_eq!(got.into_vec(), want);
         }
     }
@@ -844,7 +790,7 @@ mod tests {
             let mut got = TokenVec::new();
             let mut expsink =
                 ExpectingTokenSink::new(&mut got, |_| Some(TokenTypes::new(TokenType::Enum)));
-            json_into_tokens(&mut expsink, json).unwrap();
+            json_into_tokens(&mut expsink, json.as_bytes()).unwrap();
             assert_eq!(got.into_vec(), want);
         }
     }
@@ -911,7 +857,7 @@ mod tests {
             let mut got = TokenVec::new();
             let mut expsink =
                 ExpectingTokenSink::new(&mut got, |_| Some(TokenTypes::new(TokenType::Enum)));
-            json_into_tokens(&mut expsink, json).unwrap();
+            json_into_tokens(&mut expsink, json.as_bytes()).unwrap();
             assert_eq!(got.into_vec(), want);
         }
     }

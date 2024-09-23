@@ -35,18 +35,19 @@ assert_eq!(r#"{"b":42}"#, json);
 ### JSON To Rust
 
 ```rust
-use serser::derive::*;                // The derive macros.
+use serser::derive::*;                     // The derive macros.
 use serser::json::json_into;
-use serser::prelude::*;               // Includes the {From,Into]Tokens traits.
+use serser::prelude::*;                    // Includes the {From,Into]Tokens traits.
 
 # fn main() -> Result<(), serser::json::ParseError<serser::TokenError>> {
-#[derive(Debug, Eq, PartialEq)]       // For the assert_eq.
+#[derive(Debug, Eq, PartialEq)]            // For the assert_eq.
 #[derive(FromTokens, IntoTokens)]
 struct A {
   b: u32
 }
 
-let got = json_into::<A>(r#"{ "b": 42 }"#)?;
+let reader = r#"{ "b": 42 }"#.as_bytes();
+let got = json_into::<A, _>(reader)?;      // Takes a std::io::Read.
 
 assert_eq!(got, A { b: 42 });
 # Ok(())
