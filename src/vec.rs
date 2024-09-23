@@ -66,7 +66,25 @@ impl TokenSink for TokenVec {
     fn into_any(self: Box<Self>) -> Box<dyn std::any::Any> { self as _ }
 }
 
-impl<'a> IntoTokens for TokenVec {
+impl IntoTokens for TokenVec {
+    fn into_tokens<S: TokenSink>(&self, sink: &mut S) -> Result<(), S::Error> {
+        let mut want_more = true;
+        for token in self.vec.borrow().iter() {
+            if !want_more {
+                return Err(S::Error::invalid_token(
+                    token.into(),
+                    Some(TokenTypes::EMPTY),
+                ));
+            }
+
+            want_more = sink.yield_token(token.into())?;
+        }
+
+        Ok(())
+    }
+}
+
+impl<'a> IntoTokens for &'a TokenVec {
     fn into_tokens<S: TokenSink>(&self, sink: &mut S) -> Result<(), S::Error> {
         let mut want_more = true;
         for token in self.vec.borrow().iter() {
