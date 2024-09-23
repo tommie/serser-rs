@@ -175,9 +175,16 @@ impl<T: FromTokenSink> TokenSink for VecSink<T> {
             return subsink.expect_tokens();
         }
 
-        match self.out {
-            None => Some(TokenTypes::new(TokenType::Seq)),
-            Some(_) => T::expect_initial().map(|tt| tt.with(TokenType::EndSeq)),
+        if self.is_bytes {
+            match self.out {
+                None => Some(TokenTypes::new(TokenType::Bytes)),
+                Some(_) => Some(TokenTypes::EMPTY),
+            }
+        } else {
+            match self.out {
+                None => Some(TokenTypes::new(TokenType::Seq)),
+                Some(_) => T::expect_initial().map(|tt| tt.with(TokenType::EndSeq)),
+            }
         }
     }
 }
