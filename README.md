@@ -3,6 +3,7 @@
 [![crates.io](https://img.shields.io/crates/v/serser)](https://crates.io/crates/serser)
 [![docs.rs](https://img.shields.io/badge/serser-66c2a5?style=flat&logo=docsdotrs&label=docs.rs)](https://docs.rs/serser)
 [![GitHub last commit](https://img.shields.io/github/last-commit/tommie/serser-rs)](https://github.com/tommie/serser-rs)
+[![Test status](https://img.shields.io/github/actions/workflow/status/tommie/serser-rs/test.yml)](https://github.com/tommie/serser-rs/actions/workflows/test.yml)
 
 serser is a serialization/deserialization framework for [Rust](https://rust-lang.org/).
 It uses a stream of tokens (e.g. U32, Seq, and EndSeq) as the intermediate representation.
