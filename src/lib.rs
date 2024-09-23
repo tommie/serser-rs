@@ -1,42 +1,57 @@
-//! serser is a serialization/deserialization framework. It uses a
-//! stream of tokens (e.g. [U32](Token::U32), [Seq](Token::Seq), and
-//! [EndSeq](Token::EndSeq)) as the intermediate representation.
-//!
-//! ## Compared To serde
-//!
-//! The [serde](https://docs.rs/serde/latest/serde/) crate is the
-//! defacto standard for serialization, both for JSON and as used in
-//! wasm-bindgen for communicating with the host from WebAssembly.
-//!
-//! This crate aims to improve on the serde design in these ways:
-//!
-//! * A smaller API, making it easier to write custom (de)serializers.
-//!   Only two functions need to be implemented for a sink: one for
-//!   simple tokens, and one for tokens that start nested data.
-//! * A bufferable intermediate representation that can be shared
-//!   between threads, or stored for later use. Primarily lightweight,
-//!   reference-based, [Token] objects are used. An [OwningToken] is
-//!   provided for easy storage and IPC.
-//! * A push-based pipeline, inverting the [Iterator] pattern to allow
-//!   correct lifetimes to be expressed more easily. Tokens only live
-//!   during the [yield_token](TokenSink::yield_token) invocation; if
-//!   the callee needs to store it, it has to make a copy. This is
-//!   similar to serde, but avoids the ping-pong between
-//!   [Deserializer](https://docs.rs/serde/latest/serde/de/trait.Deserializer.html),
-//!   [\*Access](https://docs.rs/serde/latest/serde/de/trait.SeqAccess.html)
-//!   and
-//!   [Visitor](https://docs.rs/serde/latest/serde/de/trait.Visitor.html).
-//! * No reliance on `'static` for metadata.
-//!
-//! The aim is for the implementation to be on a par with serde in
-//! terms of performance.
-//!
-//! The name serser comes from the idea that serialization and
-//! deserialization are fundamentally the same thing, just switching
-//! perspectives of the source and sink. It is a conversion from one
-//! representation to another, through a common data model.
 #![doc = include_str!("../README.md")]
 #![doc(html_playground_url = "https://play.rust-lang.org/")]
+//!
+//! ## Processing Model
+//!
+//! This shows a flow where a recursive data structure like `[42]` is being parsed.
+//! The [FromTokens] trait is a convenience wrapper around [FromTokenSink].
+//! It has a blanket implementation for all [FromTokenSink].
+//!
+//! The [FromTokenSink] acts as a per-type [TokenSink] factory.
+//! It is implemented for most Rust types.
+//!
+//! The [IntoTokens] trait drives the whole chain.
+//! It calls [TokenSink::yield_token] for every token, and may use [TokenSink::expect_tokens] to negotiate data types with the sink.
+//! The diagram below only shows one lane per trait, but the calls may go to different implementations.
+//! It may recursively call other [IntoTokens].
+//!
+//! The [TokenSink] is responsible for handling the sinks.
+//! This may be writing to a [std::fmt::Write], or writing into a Rust data structure buffer.
+//! The [FromTokenSink::from_sink] function knows how to extract the buffered value from a particular [TokenSink] implementation.
+//! A sink may use [FromTokenSink] to off-load handling of constituent pieces of data to another sink.
+//! It owns the sinks it creates, forwards tokens to them, meaning that [IntoTokens] is oblivious to any subsinks.
+//! The [TokenSink::expect_tokens] function can use [FromTokenSink::expect_initial] to figure out what a nested data type requires, without creating a sink.
+//!
+//! ```text
+//!    Trait               Trait              Trait             Trait
+//! FromTokens         FromTokenSink       IntoTokens         TokenSink
+//! -----------------------------------------------------------------------
+//! from_tokens
+//!              --> new_sink
+//!             <..
+//!              ------------------------> into_tokens
+//!                                                    ---> yield_token
+//!                                                    ---> (expect_tokens)
+//!                  (expect_initial) <-------------------
+//!                                    ...................>
+//!                  new_sink         <-------------------
+//!                                    ...................>
+//!                  from_sink        <-------------------
+//!                                    ...................>
+//!                                                    ---> ...
+//!                                            |
+//!                                            V
+//!                                        into_tokens
+//!                                                    ---> yield_token
+//!                                                    ---> (expect_tokens)
+//!                  (expect_initial) <-------------------
+//!                                                    ---> ...
+//!                                            :
+//!                                            V
+//!             <........................
+//!              --> from_sink
+//!             <..
+//! ```
 
 use crate::token::*;
 
