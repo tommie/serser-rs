@@ -312,7 +312,8 @@ fn parse_in_string<'b, S: TokenSink, R: CharRead>(
                 }
             }
             Some('"') => {
-                match str_token_type(sink.expect_tokens(), default_type) {
+                match str_token_type(out.as_str(), sink.expect_tokens(), default_type) {
+                    TokenType::Char => sink.yield_token(Token::Char(out.chars().next().unwrap())),
                     TokenType::Str => sink.yield_token(Token::Str(out.as_str())),
                     TokenType::Field => sink.yield_token(Token::Field(out.as_str())),
                     TokenType::Variant => {
@@ -341,10 +342,12 @@ fn parse_in_string<'b, S: TokenSink, R: CharRead>(
     }
 }
 
-fn str_token_type(expected: Option<TokenTypes>, default_type: TokenType) -> TokenType {
+fn str_token_type(s: &str, expected: Option<TokenTypes>, default_type: TokenType) -> TokenType {
     if let Some(tts) = expected {
         if tts.contains(default_type) {
             default_type
+        } else if tts.contains(TokenType::Char) && s.len() == 1 {
+            TokenType::Char
         } else if tts.contains(TokenType::Str) {
             TokenType::Str
         } else if tts.contains(TokenType::Field) {
@@ -587,6 +590,19 @@ mod tests {
             let mut got = TokenVec::new();
             json_into_tokens(&mut got, json.as_bytes()).unwrap();
             assert_eq!(got.into_vec(), vec![OwningToken::F64(want)]);
+        }
+    }
+
+    #[test]
+    fn test_json_into_tokens_char() {
+        let cases = vec![(r#""a""#, 'a')];
+
+        for (json, want) in cases {
+            let mut got = TokenVec::new();
+            let mut expsink =
+                ExpectingTokenSink::new(&mut got, |_| Some(TokenTypes::new(TokenType::Char)));
+            json_into_tokens(&mut expsink, json.as_bytes()).unwrap();
+            assert_eq!(got.into_vec(), vec![OwningToken::Char(want)]);
         }
     }
 
