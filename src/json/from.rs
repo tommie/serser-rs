@@ -192,6 +192,34 @@ impl<W: fmt::Write> TokenSink for JsonTokenSink<W> {
     fn yield_token(&mut self, token: Token<'_>) -> Result<bool, Self::Error> {
         if token.is_end() {
             match self.state {
+                JsonState::FirstArrayElement | JsonState::ArrayElement => match token {
+                    Token::EndSeq | Token::EndTuple => {}
+                    _ => {
+                        return Err(WriteError::invalid_token(
+                            token.into(),
+                            Some(TokenTypes::new(TokenType::EndTuple).with(TokenType::EndSeq)),
+                        ))
+                    }
+                },
+                JsonState::FirstObjectKey | JsonState::ObjectKey => match token {
+                    Token::EndStruct => {}
+                    _ => {
+                        return Err(WriteError::invalid_token(
+                            token.into(),
+                            Some(TokenTypes::new(TokenType::EndStruct)),
+                        ))
+                    }
+                },
+                JsonState::EnumEnd => match token {
+                    Token::EndEnum => {}
+                    _ => {
+                        return Err(WriteError::invalid_token(
+                            token.into(),
+                            Some(TokenTypes::new(TokenType::EndEnum)),
+                        ))
+                    }
+                },
+
                 JsonState::ObjectValue => {
                     return Err(WriteError::Token(TokenError::InvalidToken(
                         token.into(),
@@ -515,7 +543,7 @@ mod tests {
     }
 
     #[test]
-    fn test_from_tokens_enum() {
+    fn test_from_tokens_enum_tuple() {
         let cases = vec![
             (
                 vec![
@@ -589,6 +617,82 @@ mod tests {
                     Token::EndEnum,
                 ],
                 "{\"a\":[{\"b\":[true]}]}",
+            ),
+        ];
+
+        for (tokens, want) in cases {
+            let mut got = String::new();
+            json_from_tokens(&mut got, TokenVec::from_iter(tokens.into_iter())).unwrap();
+            assert_eq!(got, want);
+        }
+    }
+
+    #[test]
+    fn test_from_tokens_enum_struct() {
+        let cases = vec![
+            (
+                vec![
+                    Token::Enum(EnumMeta {
+                        variants: None,
+                        kind: None,
+                    }),
+                    Token::Variant(EnumVariant::Str("a")),
+                    Token::Struct(StructMeta {
+                        fields: Some(&["b"]),
+                    }),
+                    Token::Field("b"),
+                    Token::Bool(true),
+                    Token::EndStruct,
+                    Token::EndEnum,
+                ],
+                r#"{"a":{"b":true}}"#,
+            ),
+            (
+                vec![
+                    Token::Enum(EnumMeta {
+                        variants: None,
+                        kind: None,
+                    }),
+                    Token::Variant(EnumVariant::Str("a")),
+                    Token::Struct(StructMeta {
+                        fields: Some(&["b", "c"]),
+                    }),
+                    Token::Field("b"),
+                    Token::Bool(true),
+                    Token::Field("c"),
+                    Token::Bool(false),
+                    Token::EndStruct,
+                    Token::EndEnum,
+                ],
+                r#"{"a":{"b":true,"c":false}}"#,
+            ),
+            (
+                vec![
+                    Token::Enum(EnumMeta {
+                        variants: None,
+                        kind: None,
+                    }),
+                    Token::Variant(EnumVariant::Str("a")),
+                    Token::Struct(StructMeta {
+                        fields: Some(&["b"]),
+                    }),
+                    Token::Field("b"),
+                    Token::Enum(EnumMeta {
+                        variants: None,
+                        kind: None,
+                    }),
+                    Token::Variant(EnumVariant::Str("c")),
+                    Token::Struct(StructMeta {
+                        fields: Some(&["d"]),
+                    }),
+                    Token::Field("d"),
+                    Token::Bool(true),
+                    Token::EndStruct,
+                    Token::EndEnum,
+                    Token::EndStruct,
+                    Token::EndEnum,
+                ],
+                r#"{"a":{"b":{"c":{"d":true}}}}"#,
             ),
         ];
 
