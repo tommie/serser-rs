@@ -164,6 +164,28 @@ fn parse_in_enum_object<'b, S: TokenSink>(
             Some('\r') => {}
             Some('[') => {
                 json = &json[1..];
+
+                sink.yield_token(Token::Tuple(TupleMeta { size_hint: None }))
+                    .map_err(|err| ParseError::Sink(err))?;
+
+                json = parse_in_array(sink, json)?;
+
+                sink.yield_token(Token::EndTuple)
+                    .map_err(|err| ParseError::Sink(err))?;
+
+                break;
+            }
+            Some('{') => {
+                json = &json[1..];
+
+                sink.yield_token(Token::Struct(StructMeta { fields: None }))
+                    .map_err(|err| ParseError::Sink(err))?;
+
+                json = parse_in_object(sink, json)?;
+
+                sink.yield_token(Token::EndStruct)
+                    .map_err(|err| ParseError::Sink(err))?;
+
                 break;
             }
             Some(c) => return Err(ParseError::UnexpectedChar(c)),
@@ -171,14 +193,6 @@ fn parse_in_enum_object<'b, S: TokenSink>(
 
         json = &json[1..];
     }
-
-    sink.yield_token(Token::Tuple(TupleMeta { size_hint: None }))
-        .map_err(|err| ParseError::Sink(err))?;
-
-    json = parse_in_array(sink, json)?;
-
-    sink.yield_token(Token::EndTuple)
-        .map_err(|err| ParseError::Sink(err))?;
 
     loop {
         match json.chars().next() {
@@ -760,7 +774,7 @@ mod tests {
     }
 
     #[test]
-    fn test_json_into_tokens_enum() {
+    fn test_json_into_tokens_enum_tuple() {
         let start = || {
             OwningToken::Enum(OwningEnumMeta {
                 variants: None,
@@ -809,6 +823,73 @@ mod tests {
                     OwningToken::Bool(true),
                     OwningToken::Bool(false),
                     OwningToken::EndTuple,
+                    end(),
+                ],
+            ),
+        ];
+
+        for (json, want) in cases {
+            let mut got = TokenVec::new();
+            let mut expsink =
+                ExpectingTokenSink::new(&mut got, |_| Some(TokenTypes::new(TokenType::Enum)));
+            json_into_tokens(&mut expsink, json).unwrap();
+            assert_eq!(got.into_vec(), want);
+        }
+    }
+
+    #[test]
+    fn test_json_into_tokens_enum_struct() {
+        let start = || {
+            OwningToken::Enum(OwningEnumMeta {
+                variants: None,
+                kind: None,
+            })
+        };
+        let end = || OwningToken::EndEnum;
+        let cases = vec![
+            (
+                r#"{"a":{}}"#,
+                vec![
+                    start(),
+                    OwningToken::Variant(OwningEnumVariant::Str("a".to_owned())),
+                    OwningToken::Struct(OwningStructMeta { fields: None }),
+                    OwningToken::EndStruct,
+                    end(),
+                ],
+            ),
+            (
+                r#"{ "a" : { } }"#,
+                vec![
+                    start(),
+                    OwningToken::Variant(OwningEnumVariant::Str("a".to_owned())),
+                    OwningToken::Struct(OwningStructMeta { fields: None }),
+                    OwningToken::EndStruct,
+                    end(),
+                ],
+            ),
+            (
+                r#"{"a":{"b":true}}"#,
+                vec![
+                    start(),
+                    OwningToken::Variant(OwningEnumVariant::Str("a".to_owned())),
+                    OwningToken::Struct(OwningStructMeta { fields: None }),
+                    OwningToken::Field("b".to_owned()),
+                    OwningToken::Bool(true),
+                    OwningToken::EndStruct,
+                    end(),
+                ],
+            ),
+            (
+                r#"{"a":{"b":true,"c":false}}"#,
+                vec![
+                    start(),
+                    OwningToken::Variant(OwningEnumVariant::Str("a".to_owned())),
+                    OwningToken::Struct(OwningStructMeta { fields: None }),
+                    OwningToken::Field("b".to_owned()),
+                    OwningToken::Bool(true),
+                    OwningToken::Field("c".to_owned()),
+                    OwningToken::Bool(false),
+                    OwningToken::EndStruct,
                     end(),
                 ],
             ),
