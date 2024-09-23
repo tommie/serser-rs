@@ -68,7 +68,7 @@ fn from_tokens_struct_named(
                     #ii => {
                         // We created the subsink when we set field = i, so it should be valid.
                         let cast_subsink = subsink.into_any().downcast::<<#ty as ::serser::FromTokenSink>::Sink>().unwrap();
-                        if let Some(v) = #ty::from_sink(*cast_subsink) {
+                        if let Some(v) = <#ty as ::serser::FromTokenSink>::from_sink(*cast_subsink) {
                             self.#ident = Some(v);
                             self.field_mask &= !(1 << #i);
                             self.state = -2;
@@ -112,11 +112,11 @@ fn from_tokens_struct_named(
 
         quote! {
             #ii => {
-                let mut subsink = #ty::new_sink();
+                let mut subsink = <#ty as ::serser::FromTokenSink>::new_sink();
 
                 if subsink.yield_token(token)? {
                     self.subsink = Some(Box::new(subsink));
-                } else if let Some(v) = #ty::from_sink(subsink) {
+                } else if let Some(v) = <#ty as ::serser::FromTokenSink>::from_sink(subsink) {
                     self.#ident = Some(v);
                     self.field_mask &= !(1 << #i);
                     self.state = -2;
@@ -154,14 +154,14 @@ fn from_tokens_struct_named(
             field_mask: usize,
             // -3 waits for Struct, -2 waits for Field, -1 means EndStruct seen.
             state: isize,
-            subsink: Option<Box<dyn ::serser::TokenSink<Error = TokenError>>>,
+            subsink: Option<Box<dyn ::serser::TokenSink<Error = ::serser::TokenError>>>,
             #(#sink_fields),*
         }
 
         impl<#generics_params> ::serser::TokenSink for #sink_ident<#generics_params> #where_clause {
-            type Error = TokenError;
+            type Error = ::serser::TokenError;
 
-            fn yield_token(&mut self, token: Token<'_>) -> Result<bool, Self::Error> {
+            fn yield_token(&mut self, token: ::serser::token::Token<'_>) -> Result<bool, Self::Error> {
                 if let Some(subsink) = self.subsink.as_mut() {
                     let want_more = subsink.yield_token(token)?;
 
@@ -186,12 +186,12 @@ fn from_tokens_struct_named(
                             self.state = -2;
                             Ok(true)
                         }
-                        _ => Err(Self::Error::invalid_token(token, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::Struct)))),
+                        _ => Err(<Self::Error as ::serser::Error>::invalid_token(token, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::Struct)))),
                     }
                     -2 => match token {
                         ::serser::token::Token::Field(s) => match s {
                             #(#field_str_matches)*
-                            _ => Err(Self::Error::invalid_field(s)),
+                            _ => Err(<Self::Error as ::serser::Error>::invalid_field(s)),
                         }
                         ::serser::token::Token::EndStruct => if self.field_mask == 0 {
                             self.state = -1;
@@ -201,18 +201,18 @@ fn from_tokens_struct_named(
 
                             #(#field_missing_checks)*
 
-                            Err(Self::Error::missing_fields(missing_fields.as_slice()))
+                            Err(<Self::Error as ::serser::Error>::missing_fields(missing_fields.as_slice()))
                         }
-                        _ => Err(Self::Error::invalid_token(token, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::Field)))),
+                        _ => Err(<Self::Error as ::serser::Error>::invalid_token(token, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::Field)))),
                     }
 
                     #(#field_state_matches)*
 
-                    _ => Err(Self::Error::invalid_token(token, Some(::serser::token::TokenTypes::EMPTY))),
+                    _ => Err(<Self::Error as ::serser::Error>::invalid_token(token, Some(::serser::token::TokenTypes::EMPTY))),
                 }
             }
 
-            fn expect_tokens(&mut self) -> Option<TokenTypes> {
+            fn expect_tokens(&mut self) -> Option<::serser::token::TokenTypes> {
                 match self.state {
                     -3 => Some(::serser::token::TokenTypes::new(::serser::token::TokenType::Struct)),
                     -2 => if self.field_mask != 0 {
@@ -296,7 +296,7 @@ fn from_tokens_struct_unnamed(
                     #ii => {
                         // We created the subsink when we set field = i, so it should be valid.
                         let cast_subsink = subsink.into_any().downcast::<<#ty as ::serser::FromTokenSink>::Sink>().unwrap();
-                        if let Some(v) = #ty::from_sink(*cast_subsink) {
+                        if let Some(v) = <#ty as ::serser::FromTokenSink>::from_sink(*cast_subsink) {
                             self.#ident = Some(v);
                             self.state += 1;
                             Ok(true)
@@ -314,11 +314,11 @@ fn from_tokens_struct_unnamed(
 
         quote! {
             #ii => {
-                let mut subsink = #ty::new_sink();
+                let mut subsink = <#ty as ::serser::FromTokenSink>::new_sink();
 
                 if subsink.yield_token(token)? {
                     self.subsink = Some(Box::new(subsink));
-                } else if let Some(v) = #ty::from_sink(subsink) {
+                } else if let Some(v) = <#ty as ::serser::FromTokenSink>::from_sink(subsink) {
                     self.#ident = Some(v);
                     self.state += 1;
                 } else {
@@ -353,14 +353,14 @@ fn from_tokens_struct_unnamed(
         struct #sink_ident<#generics_params> {
             // -2 waits for Tuple, -1 is after EndTuple.
             state: isize,
-            subsink: Option<Box<dyn ::serser::TokenSink<Error = TokenError>>>,
+            subsink: Option<Box<dyn ::serser::TokenSink<Error = ::serser::TokenError>>>,
             #(#sink_fields),*
         }
 
         impl<#generics_params> ::serser::TokenSink for #sink_ident<#generics_params> #where_clause {
-            type Error = TokenError;
+            type Error = ::serser::TokenError;
 
-            fn yield_token(&mut self, token: Token<'_>) -> Result<bool, Self::Error> {
+            fn yield_token(&mut self, token: ::serser::token::Token<'_>) -> Result<bool, Self::Error> {
                 if let Some(subsink) = self.subsink.as_mut() {
                     let want_more = subsink.yield_token(token)?;
 
@@ -385,7 +385,7 @@ fn from_tokens_struct_unnamed(
                             self.state = 0;
                             Ok(true)
                         }
-                        _ => Err(Self::Error::invalid_token(token, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::Tuple)))),
+                        _ => Err(<Self::Error as ::serser::Error>::invalid_token(token, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::Tuple)))),
                     }
 
                     #(#field_state_matches)*
@@ -394,11 +394,11 @@ fn from_tokens_struct_unnamed(
                         self.state = -1;
                         Ok(false)
                     }
-                    _ => Err(Self::Error::invalid_token(token, Some(::serser::token::TokenTypes::EMPTY))),
+                    _ => Err(<Self::Error as ::serser::Error>::invalid_token(token, Some(::serser::token::TokenTypes::EMPTY))),
                 }
             }
 
-            fn expect_tokens(&mut self) -> Option<TokenTypes> {
+            fn expect_tokens(&mut self) -> Option<::serser::token::TokenTypes> {
                 match self.state {
                     -2 => Some(::serser::token::TokenTypes::new(::serser::token::TokenType::Tuple)),
 
@@ -546,7 +546,7 @@ fn from_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
                             #state_ident::#ident(ref mut i @ #jj, #(#field_params),*) => {
                                 // We created the subsink when we set i = #jj, so it should be valid.
                                 let cast_subsink = subsink.into_any().downcast::<<#ty as ::serser::FromTokenSink>::Sink>().unwrap();
-                                if let Some(v) = #ty::from_sink(*cast_subsink) {
+                                if let Some(v) = <#ty as ::serser::FromTokenSink>::from_sink(*cast_subsink) {
                                     *#fident = Some(v);
                                     *i += 1;
                                     Ok(true)
@@ -570,7 +570,7 @@ fn from_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
                             #state_ident::#ident(ref mut i @ #jj, ref mut mask, #(#field_params),*) => {
                                 // We created the subsink when we set i = #jj, so it should be valid.
                                 let cast_subsink = subsink.into_any().downcast::<<#ty as ::serser::FromTokenSink>::Sink>().unwrap();
-                                if let Some(v) = #ty::from_sink(*cast_subsink) {
+                                if let Some(v) = <#ty as ::serser::FromTokenSink>::from_sink(*cast_subsink) {
                                     *#fident = Some(v);
                                     *mask &= !(1 << #j);
                                     *i = -2;
@@ -606,11 +606,11 @@ fn from_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
 
                         quote! {
                             #state_ident::#ident(ref mut i @ #jj, #(#field_params),*) => {
-                                let mut subsink = #ty::new_sink();
+                                let mut subsink = <#ty as ::serser::FromTokenSink>::new_sink();
 
                                 if subsink.yield_token(token)? {
                                     self.subsink = Some(Box::new(subsink));
-                                } else if let Some(v) = #ty::from_sink(subsink) {
+                                } else if let Some(v) = <#ty as ::serser::FromTokenSink>::from_sink(subsink) {
                                     *#fident = Some(v);
                                     *i += 1;
                                 } else {
@@ -632,11 +632,11 @@ fn from_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
 
                         quote! {
                             #state_ident::#ident(ref mut i @ #jj, ref mut mask, #(#field_params),*) => {
-                                let mut subsink = #ty::new_sink();
+                                let mut subsink = <#ty as ::serser::FromTokenSink>::new_sink();
 
                                 if subsink.yield_token(token)? {
                                     self.subsink = Some(Box::new(subsink));
-                                } else if let Some(v) = #ty::from_sink(subsink) {
+                                } else if let Some(v) = <#ty as ::serser::FromTokenSink>::from_sink(subsink) {
                                     *#fident = Some(v);
                                     *mask &= !(1 << #j);
                                     *i = -2;
@@ -668,7 +668,7 @@ fn from_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
                             *i = 2;
                             Ok(false)
                         }
-                        t => Err(Self::Error::invalid_token(t, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::Tuple)))),
+                        t => Err(<Self::Error as ::serser::Error>::invalid_token(t, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::Tuple)))),
                     }
 
                     #(#field_matches)*
@@ -678,14 +678,14 @@ fn from_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
                             *i += 1;
                             Ok(true)
                         }
-                        t => Err(Self::Error::invalid_token(t, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::EndTuple)))),
+                        t => Err(<Self::Error as ::serser::Error>::invalid_token(t, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::EndTuple)))),
                     }
                     #state_ident::#ident(ref mut i @ #end_tuple, #(#field_placeholders),*) => match token {
                         ::serser::token::Token::EndEnum => {
                             *i += 1;
                             Ok(false)
                         }
-                        t => Err(Self::Error::invalid_token(t, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::EndEnum)))),
+                        t => Err(<Self::Error as ::serser::Error>::invalid_token(t, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::EndEnum)))),
                     }
                 },
                 syn::Fields::Named(fields) => {
@@ -711,18 +711,18 @@ fn from_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
                                 *i = 2;
                                 Ok(false)
                             }
-                            t => Err(Self::Error::invalid_token(t, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::Struct)))),
+                            t => Err(<Self::Error as ::serser::Error>::invalid_token(t, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::Struct)))),
                         }
                         #state_ident::#ident(ref mut i @ -2, _, #(#field_params),*) => match token {
                             ::serser::token::Token::Field(s) => match s {
                                 #(#field_name_matches)*
-                                s => Err(Self::Error::invalid_field(s)),
+                                s => Err(<Self::Error as ::serser::Error>::invalid_field(s)),
                             }
                             ::serser::token::Token::EndStruct => {
                                 *i = #num_fields + 1;
                                 Ok(true)
                             }
-                            t => Err(Self::Error::invalid_token(t, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::Field).with(::serser::token::TokenType::EndStruct)))),
+                            t => Err(<Self::Error as ::serser::Error>::invalid_token(t, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::Field).with(::serser::token::TokenType::EndStruct)))),
                         }
 
                         #(#field_matches)*
@@ -732,14 +732,14 @@ fn from_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
                                 *i += 1;
                                 Ok(true)
                             }
-                            t => Err(Self::Error::invalid_token(t, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::EndStruct)))),
+                            t => Err(<Self::Error as ::serser::Error>::invalid_token(t, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::EndStruct)))),
                         }
                         #state_ident::#ident(ref mut i @ #end_tuple, _, #(#field_placeholders),*) => match token {
                             ::serser::token::Token::EndEnum => {
                                 *i += 1;
                                 Ok(false)
                             }
-                            t => Err(Self::Error::invalid_token(t, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::EndEnum)))),
+                            t => Err(<Self::Error as ::serser::Error>::invalid_token(t, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::EndEnum)))),
                         }
                     }
                 },
@@ -753,7 +753,7 @@ fn from_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
                             *i = 2;
                             Ok(false)
                         }
-                        t => Err(Self::Error::invalid_token(t, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::Tuple)))),
+                        t => Err(<Self::Error as ::serser::Error>::invalid_token(t, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::Tuple)))),
                     }
 
                     #state_ident::#ident(ref mut i @ 0, #(#field_placeholders),*) => match token {
@@ -761,14 +761,14 @@ fn from_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
                             *i += 1;
                             Ok(true)
                         }
-                        t => Err(Self::Error::invalid_token(t, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::EndTuple)))),
+                        t => Err(<Self::Error as ::serser::Error>::invalid_token(t, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::EndTuple)))),
                     }
                     #state_ident::#ident(ref mut i @ 1, #(#field_placeholders),*) => match token {
                         ::serser::token::Token::EndEnum => {
                             *i += 1;
                             Ok(false)
                         }
-                        t => Err(Self::Error::invalid_token(t, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::EndEnum)))),
+                        t => Err(<Self::Error as ::serser::Error>::invalid_token(t, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::EndEnum)))),
                     }
                 },
             }
@@ -915,13 +915,13 @@ fn from_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
 
         struct #sink_ident<#generics_params> {
             state: #state_ident<#generics_params>,
-            subsink: Option<Box<dyn ::serser::TokenSink<Error = TokenError>>>,
+            subsink: Option<Box<dyn ::serser::TokenSink<Error = ::serser::TokenError>>>,
         }
 
         impl<#generics_params> ::serser::TokenSink for #sink_ident<#generics_params> #where_clause {
-            type Error = TokenError;
+            type Error = ::serser::TokenError;
 
-            fn yield_token(&mut self, token: Token<'_>) -> Result<bool, Self::Error> {
+            fn yield_token(&mut self, token: ::serser::token::Token<'_>) -> Result<bool, Self::Error> {
                 if let Some(subsink) = self.subsink.as_mut() {
                     let want_more = subsink.yield_token(token)?;
 
@@ -946,15 +946,15 @@ fn from_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
                             self.state = #state_ident::Start;
                             Ok(true)
                         }
-                        _ => Err(Self::Error::invalid_token(token, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::Enum)))),
+                        _ => Err(<Self::Error as ::serser::Error>::invalid_token(token, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::Enum)))),
                     }
                     #state_ident::Start => match token {
                         ::serser::token::Token::Variant(var @ ::serser::token::EnumVariant::Str(s)) => match s {
                             #(#variant_str_matches)*
-                            _ => Err(Self::Error::invalid_variant(var)),
+                            _ => Err(<Self::Error as ::serser::Error>::invalid_variant(var)),
                         }
-                        ::serser::token::Token::Variant(var) => Err(Self::Error::invalid_variant(var)),
-                        _ => Err(Self::Error::invalid_token(token, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::Variant)))),
+                        ::serser::token::Token::Variant(var) => Err(<Self::Error as ::serser::Error>::invalid_variant(var)),
+                        _ => Err(<Self::Error as ::serser::Error>::invalid_token(token, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::Variant)))),
                     }
 
                     #(#variant_state_matches)*
@@ -963,7 +963,7 @@ fn from_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
                 }
             }
 
-            fn expect_tokens(&mut self) -> Option<TokenTypes> {
+            fn expect_tokens(&mut self) -> Option<::serser::token::TokenTypes> {
                 match self.state {
                     #state_ident::Unknown => Some(::serser::token::TokenTypes::new(::serser::token::TokenType::Enum)),
                     #state_ident::Start => Some(::serser::token::TokenTypes::new(::serser::token::TokenType::Variant)),
