@@ -173,7 +173,7 @@ mod tests {
     }
 
     #[test]
-    fn from_tokens_enum() {
+    fn from_tokens_enum_tuple() {
         #[derive(Debug, Eq, FromTokens, PartialEq)]
         enum AnEnum {
             A,
@@ -230,7 +230,7 @@ mod tests {
     }
 
     #[test]
-    fn from_tokens_enum_nested() {
+    fn from_tokens_enum_tuple_nested() {
         #[derive(Debug, Eq, FromTokens, PartialEq)]
         enum AnEnum {
             A(bool),
@@ -259,6 +259,118 @@ mod tests {
                 OwningToken::EndTuple,
                 OwningToken::EndEnum,
                 OwningToken::EndTuple,
+                OwningToken::EndEnum,
+            ],
+        )];
+
+        for (want, input) in cases {
+            let got = AnotherEnum::from_tokens(TokenVec::from(input)).unwrap();
+            assert_eq!(got, want);
+        }
+    }
+
+    #[test]
+    fn from_tokens_enum_struct() {
+        #[derive(Debug, Eq, FromTokens, PartialEq)]
+        enum AnEnum {
+            A,
+            B { b: u32 },
+            C { c: bool, d: u32 },
+        }
+        let meta = OwningEnumMeta {
+            variants: Some(vec![
+                OwningEnumVariant::Str("A".to_string()),
+                OwningEnumVariant::Str("B".to_string()),
+                OwningEnumVariant::Str("C".to_string()),
+            ]),
+            kind: None,
+        };
+
+        let cases = vec![
+            (
+                AnEnum::A,
+                vec![
+                    OwningToken::Enum(meta.clone()),
+                    OwningToken::Variant(OwningEnumVariant::Str("A".to_owned())),
+                    OwningToken::EndEnum,
+                ],
+            ),
+            (
+                AnEnum::B { b: 42 },
+                vec![
+                    OwningToken::Enum(meta.clone()),
+                    OwningToken::Variant(OwningEnumVariant::Str("B".to_owned())),
+                    OwningToken::Struct(OwningStructMeta {
+                        fields: Some(vec!["b".to_owned()]),
+                    }),
+                    OwningToken::Field("b".to_owned()),
+                    OwningToken::U32(42),
+                    OwningToken::EndStruct,
+                    OwningToken::EndEnum,
+                ],
+            ),
+            (
+                AnEnum::C { c: true, d: 42 },
+                vec![
+                    OwningToken::Enum(meta.clone()),
+                    OwningToken::Variant(OwningEnumVariant::Str("C".to_owned())),
+                    OwningToken::Struct(OwningStructMeta {
+                        fields: Some(vec!["c".to_owned(), "d".to_owned()]),
+                    }),
+                    OwningToken::Field("c".to_owned()),
+                    OwningToken::Bool(true),
+                    OwningToken::Field("d".to_owned()),
+                    OwningToken::U32(42),
+                    OwningToken::EndStruct,
+                    OwningToken::EndEnum,
+                ],
+            ),
+        ];
+
+        for (want, input) in cases {
+            let got = AnEnum::from_tokens(TokenVec::from(input)).unwrap();
+            assert_eq!(got, want);
+        }
+    }
+
+    #[test]
+    fn from_tokens_enum_struct_nested() {
+        #[derive(Debug, Eq, FromTokens, PartialEq)]
+        enum AnEnum {
+            A { a: bool },
+        }
+        #[derive(Debug, Eq, FromTokens, PartialEq)]
+        enum AnotherEnum {
+            B { b: AnEnum },
+        }
+
+        let cases = vec![(
+            AnotherEnum::B {
+                b: AnEnum::A { a: true },
+            },
+            vec![
+                OwningToken::Enum(OwningEnumMeta {
+                    variants: Some(vec![OwningEnumVariant::Str("B".to_string())]),
+                    kind: None,
+                }),
+                OwningToken::Variant(OwningEnumVariant::Str("B".to_owned())),
+                OwningToken::Struct(OwningStructMeta {
+                    fields: Some(vec!["b".to_owned()]),
+                }),
+                OwningToken::Field("b".to_owned()),
+                OwningToken::Enum(OwningEnumMeta {
+                    variants: Some(vec![OwningEnumVariant::Str("A".to_string())]),
+                    kind: None,
+                }),
+                OwningToken::Variant(OwningEnumVariant::Str("A".to_owned())),
+                OwningToken::Struct(OwningStructMeta {
+                    fields: Some(vec!["a".to_owned()]),
+                }),
+                OwningToken::Field("a".to_owned()),
+                OwningToken::Bool(true),
+                OwningToken::EndStruct,
+                OwningToken::EndEnum,
+                OwningToken::EndStruct,
                 OwningToken::EndEnum,
             ],
         )];

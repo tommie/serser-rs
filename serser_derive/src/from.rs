@@ -447,26 +447,46 @@ fn from_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
     let sink_ident = format_ident!("{}SerSerTokenSink", ident);
     let sink_variants = data.variants.iter().enumerate().map(|(i, variant)| {
         let ident = format_ident!("V{}", i);
-        let fields = if let syn::Fields::Unnamed(fields) = &variant.fields {
-            fields
-                .unnamed
-                .iter()
-                .map(|field| {
-                    let ty = &field.ty;
+        match &variant.fields {
+            syn::Fields::Unnamed(fields) => {
+                let fields = fields
+                    .unnamed
+                    .iter()
+                    .map(|field| {
+                        let ty = &field.ty;
 
-                    quote! { Option<#ty> }
-                })
-                .collect::<Vec<_>>()
-        } else {
-            Vec::new()
-        };
+                        quote! { Option<#ty> }
+                    })
+                    .collect::<Vec<_>>();
 
-        // The first value is the current field number.
-        // -1 means waiting for Tuple.
-        // num_fields means waiting for EndTuple.
-        // num_fields+1 means waiting for EndEnum.
-        // num_fields+2 means complete.
-        quote! { #ident (isize, #(#fields),*) }
+                // The first value is the current field number.
+                // -1 means waiting for Tuple/Struct.
+                // num_fields means waiting for EndTuple.
+                // num_fields+1 means waiting for EndEnum.
+                // num_fields+2 means complete.
+                quote! { #ident (isize, #(#fields),*) }
+            }
+            syn::Fields::Named(fields) => {
+                let fields = fields
+                    .named
+                    .iter()
+                    .map(|field| {
+                        let ty = &field.ty;
+
+                        quote! { Option<#ty> }
+                    })
+                    .collect::<Vec<_>>();
+
+                // The first value is the current field number.
+                // -2 means waiting for Field. See also above.
+                // The second is a mask of required fields remaining.
+                quote! { #ident (isize, usize, #(#fields),*) }
+            }
+            syn::Fields::Unit => {
+                // The first value is the current field number. See above.
+                quote! { #ident (isize) }
+            }
+        }
     });
     let variant_str_matches = data.variants.iter().enumerate().map(|(i, variant)| {
         let ident = format_ident!("V{}", i);
@@ -474,21 +494,35 @@ fn from_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
             format!("{}", variant.ident).as_str(),
             proc_macro2::Span::call_site(),
         );
-        let fields = if let syn::Fields::Unnamed(fields) = &variant.fields {
-            fields
-                .unnamed
-                .iter()
-                .map(|_| quote! { None })
-                .collect::<Vec<_>>()
-        } else {
-            Vec::new()
-        };
+        let fields = variant
+            .fields
+            .iter()
+            .map(|_| quote! { None })
+            .collect::<Vec<_>>();
 
-        quote! {
-            #name_str => {
-                self.state = #state_ident::#ident(-1, #(#fields),*);
-                Ok(true)
+        match &variant.fields {
+            syn::Fields::Unnamed(_) => quote! {
+                #name_str => {
+                    self.state = #state_ident::#ident(-1, #(#fields),*);
+                    Ok(true)
+                }
+            },
+            syn::Fields::Named(_) => {
+                let mask: usize = (1 << fields.len()) - 1;
+
+                quote! {
+                    #name_str => {
+                        self.state = #state_ident::#ident(-1, #mask, #(#fields),*);
+                        Ok(true)
+                    }
+                }
             }
+            syn::Fields::Unit => quote! {
+                #name_str => {
+                    self.state = #state_ident::#ident(-1, #(#fields),*);
+                    Ok(true)
+                }
+            },
         }
     });
     let end_state_matches = data
@@ -497,22 +531,9 @@ fn from_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
         .enumerate()
         .map(|(i, variant)| {
             let ident = format_ident!("V{}", i);
-            let field_params = if let syn::Fields::Unnamed(fields) = &variant.fields {
-                fields
-                    .unnamed
-                    .iter()
-                    .enumerate()
-                    .map(|(j, _)| {
-                        let ident = format_ident!("f{}", j);
-
-                        quote! { ref mut #ident }
-                    })
-                    .collect::<Vec<_>>()
-            } else {
-                Vec::new()
-            };
-            let field_matches = if let syn::Fields::Unnamed(fields) = &variant.fields {
-                fields
+            let field_params = get_field_tuple_params(&variant.fields);
+            let field_matches = match &variant.fields {
+                syn::Fields::Unnamed(fields) => fields
                     .unnamed
                     .iter()
                     .enumerate()
@@ -523,7 +544,7 @@ fn from_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
 
                         quote! {
                             #state_ident::#ident(ref mut i @ #jj, #(#field_params),*) => {
-                                // We created the subsink when we set i = j, so it should be valid.
+                                // We created the subsink when we set i = #jj, so it should be valid.
                                 let cast_subsink = subsink.into_any().downcast::<<#ty as ::serser::FromTokenSink>::Sink>().unwrap();
                                 if let Some(v) = #ty::from_sink(*cast_subsink) {
                                     *#fident = Some(v);
@@ -535,14 +556,36 @@ fn from_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
                             }
                         }
                     })
-                    .collect::<Vec<_>>()
-            } else {
-                Vec::new()
+                    .collect::<Vec<_>>(),
+                syn::Fields::Named(fields) => fields
+                    .named
+                    .iter()
+                    .enumerate()
+                    .map(|(j, field)| {
+                        let fident = format_ident!("f{}", j);
+                        let ty = &field.ty;
+                        let jj = j as isize;
+
+                        quote! {
+                            #state_ident::#ident(ref mut i @ #jj, ref mut mask, #(#field_params),*) => {
+                                // We created the subsink when we set i = #jj, so it should be valid.
+                                let cast_subsink = subsink.into_any().downcast::<<#ty as ::serser::FromTokenSink>::Sink>().unwrap();
+                                if let Some(v) = #ty::from_sink(*cast_subsink) {
+                                    *#fident = Some(v);
+                                    *mask &= !(1 << #j);
+                                    *i = -2;
+                                    Ok(true)
+                                } else {
+                                    unreachable!("subsink yield_token signaled end, but no value is available")
+                                }
+                            }
+                        }
+                    })
+                    .collect::<Vec<_>>(),
+                syn::Fields::Unit => Vec::new(),
             };
 
-            quote! {
-                #(#field_matches)*
-            }
+            quote! { #(#field_matches)* }
         });
     let variant_state_matches = data
         .variants
@@ -550,22 +593,9 @@ fn from_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
         .enumerate()
         .map(|(i, variant)| {
             let ident = format_ident!("V{}", i);
-            let field_params = if let syn::Fields::Unnamed(fields) = &variant.fields {
-                fields
-                    .unnamed
-                    .iter()
-                    .enumerate()
-                    .map(|(j, _)| {
-                        let ident = format_ident!("f{}", j);
-
-                        quote! { ref mut #ident }
-                    })
-                    .collect::<Vec<_>>()
-            } else {
-                Vec::new()
-            };
-            let field_matches = if let syn::Fields::Unnamed(fields) = &variant.fields {
-                fields
+            let field_params = get_field_tuple_params(&variant.fields);
+            let field_matches = match &variant.fields {
+                syn::Fields::Unnamed(fields) => fields
                     .unnamed
                     .iter()
                     .enumerate()
@@ -590,51 +620,157 @@ fn from_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
                             }
                         }
                     })
-                    .collect::<Vec<_>>()
-            } else {
-                Vec::new()
+                    .collect::<Vec<_>>(),
+                syn::Fields::Named(fields) => fields
+                    .named
+                    .iter()
+                    .enumerate()
+                    .map(|(j, field)| {
+                        let fident = format_ident!("f{}", j);
+                        let ty = &field.ty;
+                        let jj = j as isize;
+
+                        quote! {
+                            #state_ident::#ident(ref mut i @ #jj, ref mut mask, #(#field_params),*) => {
+                                let mut subsink = #ty::new_sink();
+
+                                if subsink.yield_token(token)? {
+                                    self.subsink = Some(Box::new(subsink));
+                                } else if let Some(v) = #ty::from_sink(subsink) {
+                                    *#fident = Some(v);
+                                    *mask &= !(1 << #j);
+                                    *i = -2;
+                                } else {
+                                    unreachable!("subsink yield_token signaled end, but no value is available");
+                                }
+                                Ok(true)
+                            }
+                        }
+                    })
+                    .collect::<Vec<_>>(),
+                syn::Fields::Unit => Vec::new(),
             };
-            let field_placeholders = if let syn::Fields::Unnamed(fields) = &variant.fields {
-                fields
-                    .unnamed
+            let field_placeholders = &variant.fields
                     .iter()
                     .map(|_| quote! { _ })
-                    .collect::<Vec<_>>()
-            } else {
-                Vec::new()
-            };
+                    .collect::<Vec<_>>();
             let num_fields = field_placeholders.len() as isize;
             let end_tuple = num_fields + 1;
 
-            quote! {
-                #state_ident::#ident(ref mut i @ -1, #(#field_placeholders),*) => match token {
-                    ::serser::token::Token::Tuple(_) => {
-                        *i = 0;
-                        Ok(true)
+            match &variant.fields {
+                syn::Fields::Unnamed(_) => quote! {
+                    #state_ident::#ident(ref mut i @ -1, #(#field_placeholders),*) => match token {
+                        ::serser::token::Token::Tuple(_) => {
+                            *i = 0;
+                            Ok(true)
+                        }
+                        ::serser::token::Token::EndEnum if #num_fields == 0 => {
+                            *i = 2;
+                            Ok(false)
+                        }
+                        t => Err(Self::Error::invalid_token(t, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::Tuple)))),
                     }
-                    ::serser::token::Token::EndEnum if #num_fields == 0 => {
-                        *i = 2;
-                        Ok(false)
-                    }
-                    t => Err(Self::Error::invalid_token(t, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::Tuple)))),
-                }
 
-                #(#field_matches)*
+                    #(#field_matches)*
 
-                #state_ident::#ident(ref mut i @ #num_fields, #(#field_placeholders),*) => match token {
-                    ::serser::token::Token::EndTuple => {
-                        *i += 1;
-                        Ok(true)
+                    #state_ident::#ident(ref mut i @ #num_fields, #(#field_placeholders),*) => match token {
+                        ::serser::token::Token::EndTuple => {
+                            *i += 1;
+                            Ok(true)
+                        }
+                        t => Err(Self::Error::invalid_token(t, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::EndTuple)))),
                     }
-                    t => Err(Self::Error::invalid_token(t, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::EndTuple)))),
-                }
-                #state_ident::#ident(ref mut i @ #end_tuple, #(#field_placeholders),*) => match token {
-                    ::serser::token::Token::EndEnum => {
-                        *i += 1;
-                        Ok(false)
+                    #state_ident::#ident(ref mut i @ #end_tuple, #(#field_placeholders),*) => match token {
+                        ::serser::token::Token::EndEnum => {
+                            *i += 1;
+                            Ok(false)
+                        }
+                        t => Err(Self::Error::invalid_token(t, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::EndEnum)))),
                     }
-                    t => Err(Self::Error::invalid_token(t, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::EndEnum)))),
-                }
+                },
+                syn::Fields::Named(fields) => {
+                    let field_name_matches = fields.named.iter().enumerate().map(|(j, field)| {
+                        let name_str = format!("{}", field.ident.as_ref().unwrap());
+                        let jj = j as isize;
+
+                        quote! {
+                            #name_str => {
+                                *i = #jj;
+                                Ok(true)
+                            }
+                        }
+                    });
+
+                    quote! {
+                        #state_ident::#ident(ref mut i @ -1, _, #(#field_placeholders),*) => match token {
+                            ::serser::token::Token::Struct(_) => {
+                                *i = -2;
+                                Ok(true)
+                            }
+                            ::serser::token::Token::EndEnum if #num_fields == 0 => {
+                                *i = 2;
+                                Ok(false)
+                            }
+                            t => Err(Self::Error::invalid_token(t, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::Struct)))),
+                        }
+                        #state_ident::#ident(ref mut i @ -2, _, #(#field_params),*) => match token {
+                            ::serser::token::Token::Field(s) => match s {
+                                #(#field_name_matches)*
+                                s => Err(Self::Error::invalid_field(s)),
+                            }
+                            ::serser::token::Token::EndStruct => {
+                                *i = #num_fields + 1;
+                                Ok(true)
+                            }
+                            t => Err(Self::Error::invalid_token(t, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::Field).with(::serser::token::TokenType::EndStruct)))),
+                        }
+
+                        #(#field_matches)*
+
+                        #state_ident::#ident(ref mut i @ #num_fields, _, #(#field_placeholders),*) => match token {
+                            ::serser::token::Token::EndStruct => {
+                                *i += 1;
+                                Ok(true)
+                            }
+                            t => Err(Self::Error::invalid_token(t, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::EndStruct)))),
+                        }
+                        #state_ident::#ident(ref mut i @ #end_tuple, _, #(#field_placeholders),*) => match token {
+                            ::serser::token::Token::EndEnum => {
+                                *i += 1;
+                                Ok(false)
+                            }
+                            t => Err(Self::Error::invalid_token(t, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::EndEnum)))),
+                        }
+                    }
+                },
+                syn::Fields::Unit => quote! {
+                    #state_ident::#ident(ref mut i @ -1, #(#field_placeholders),*) => match token {
+                        ::serser::token::Token::Tuple(_) => {
+                            *i = 0;
+                            Ok(true)
+                        }
+                        ::serser::token::Token::EndEnum if #num_fields == 0 => {
+                            *i = 2;
+                            Ok(false)
+                        }
+                        t => Err(Self::Error::invalid_token(t, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::Tuple)))),
+                    }
+
+                    #state_ident::#ident(ref mut i @ 0, #(#field_placeholders),*) => match token {
+                        ::serser::token::Token::EndTuple => {
+                            *i += 1;
+                            Ok(true)
+                        }
+                        t => Err(Self::Error::invalid_token(t, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::EndTuple)))),
+                    }
+                    #state_ident::#ident(ref mut i @ 1, #(#field_placeholders),*) => match token {
+                        ::serser::token::Token::EndEnum => {
+                            *i += 1;
+                            Ok(false)
+                        }
+                        t => Err(Self::Error::invalid_token(t, Some(::serser::token::TokenTypes::new(::serser::token::TokenType::EndEnum)))),
+                    }
+                },
             }
         });
     let expect_matches = data
@@ -643,17 +779,21 @@ fn from_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
         .enumerate()
         .map(|(i, variant)| {
             let ident = format_ident!("V{}", i);
-            let field_placeholders = if let syn::Fields::Unnamed(fields) = &variant.fields {
-                fields
+            let field_placeholders = match &variant.fields {
+                syn::Fields::Unnamed(fields) => fields
                     .unnamed
                     .iter()
                     .map(|_| quote! { _ })
-                    .collect::<Vec<_>>()
-            } else {
-                Vec::new()
+                    .collect::<Vec<_>>(),
+                syn::Fields::Named(fields) => fields
+                    .named
+                    .iter()
+                    .map(|_| quote! { _ })
+                    .collect::<Vec<_>>(),
+                syn::Fields::Unit => Vec::new(),
             };
-            let field_matches = if let syn::Fields::Unnamed(fields) = &variant.fields {
-                fields
+            let field_matches = match &variant.fields {
+                syn::Fields::Unnamed(fields) => fields
                     .unnamed
                     .iter()
                     .enumerate()
@@ -665,20 +805,44 @@ fn from_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
                             #state_ident::#ident(#jj, #(#field_placeholders),*) => <#ty as ::serser::FromTokenSink>::expect_initial(),
                         }
                     })
-                    .collect::<Vec<_>>()
-            } else {
-                Vec::new()
+                    .collect::<Vec<_>>(),
+                syn::Fields::Named(fields) => fields
+                    .named
+                    .iter()
+                    .enumerate()
+                    .map(|(j, field)| {
+                        let ty = &field.ty;
+                        let jj = j as isize;
+
+                        quote! {
+                            #state_ident::#ident(#jj, _, #(#field_placeholders),*) => <#ty as ::serser::FromTokenSink>::expect_initial(),
+                        }
+                    })
+                    .collect::<Vec<_>>(),
+                syn::Fields::Unit => Vec::new(),
             };
             let num_fields = field_placeholders.len() as isize;
             let end_tuple = num_fields + 1;
             let end_enum = num_fields + 2;
 
             // End-of-fields is handled by the common _ match.
-            quote! {
-                #(#field_matches)*
+            match &variant.fields {
+                syn::Fields::Unnamed(_) => quote! {
+                    #(#field_matches)*
 
-                #state_ident::#ident(#end_tuple, #(#field_placeholders),*) => Some(::serser::token::TokenTypes::new(::serser::token::TokenType::EndTuple)),
-                #state_ident::#ident(#end_enum, #(#field_placeholders),*) => Some(::serser::token::TokenTypes::new(::serser::token::TokenType::EndEnum)),
+                    #state_ident::#ident(#end_tuple, #(#field_placeholders),*) => Some(::serser::token::TokenTypes::new(::serser::token::TokenType::EndTuple)),
+                    #state_ident::#ident(#end_enum, #(#field_placeholders),*) => Some(::serser::token::TokenTypes::new(::serser::token::TokenType::EndEnum)),
+                },
+                syn::Fields::Named(_) => quote! {
+                    #(#field_matches)*
+
+                    #state_ident::#ident(#end_tuple, _, #(#field_placeholders),*) => Some(::serser::token::TokenTypes::new(::serser::token::TokenType::EndTuple)),
+                    #state_ident::#ident(#end_enum, _, #(#field_placeholders),*) => Some(::serser::token::TokenTypes::new(::serser::token::TokenType::EndEnum)),
+                },
+                syn::Fields::Unit => quote! {
+                    #state_ident::#ident(#end_tuple, #(#field_placeholders),*) => Some(::serser::token::TokenTypes::new(::serser::token::TokenType::EndTuple)),
+                    #state_ident::#ident(#end_enum, #(#field_placeholders),*) => Some(::serser::token::TokenTypes::new(::serser::token::TokenType::EndEnum)),
+                },
             }
         });
     let variant_from_sink_matches = data
@@ -688,40 +852,55 @@ fn from_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
         .map(|(i, variant)| {
             let orig_ident = &variant.ident;
             let ident = format_ident!("V{}", i);
-            let field_params = if let syn::Fields::Unnamed(fields) = &variant.fields {
-                fields
-                    .unnamed
-                    .iter()
-                    .enumerate()
-                    .map(|(j, _)| {
-                        let ident = format_ident!("f{}", j);
-
-                        quote! { Some(#ident) }
-                    })
-                    .collect::<Vec<_>>()
-            } else {
-                Vec::new()
-            };
-            let field_args = if let syn::Fields::Unnamed(fields) = &variant.fields {
-                fields
+            let field_idents = match &variant.fields {
+                syn::Fields::Unnamed(fields) => fields
                     .unnamed
                     .iter()
                     .enumerate()
                     .map(|(j, _)| format_ident!("f{}", j))
-                    .collect::<Vec<_>>()
-            } else {
-                Vec::new()
+                    .collect::<Vec<_>>(),
+                syn::Fields::Named(fields) => fields
+                    .named
+                    .iter()
+                    .enumerate()
+                    .map(|(j, _)| format_ident!("f{}", j))
+                    .collect::<Vec<_>>(),
+                syn::Fields::Unit => Vec::new(),
+            };
+            let field_params = field_idents.iter().map(|ident| quote! { Some(#ident) }).collect::<Vec<_>>();
+            let field_args = match &variant.fields {
+                syn::Fields::Unnamed(_) => field_idents.iter().map(|ident| quote! { #ident }).collect::<Vec<_>>(),
+                syn::Fields::Named(fields) => fields
+                    .named
+                    .iter()
+                    .enumerate()
+                    .map(|(j, field)| {
+                        let orig_ident = &field.ident;
+                        let ident = format_ident!("f{}", j);
+
+                        quote! { #orig_ident: #ident }
+                    })
+                    .collect::<Vec<_>>(),
+                syn::Fields::Unit => Vec::new(),
             };
             let num_fields = field_params.len() as isize;
             let end_enum = num_fields + 2;
 
-            if num_fields == 0 {
-                quote! {
-                    #state_ident::#ident(#end_enum) => Some(Self::#orig_ident),
+            match &variant.fields {
+                syn::Fields::Unnamed(_) => if num_fields == 0 {
+                    quote! {
+                        #state_ident::#ident(#end_enum) => Some(Self::#orig_ident),
+                    }
+                } else {
+                    quote! {
+                        #state_ident::#ident(#end_enum, #(#field_params),*) => Some(Self::#orig_ident(#(#field_args),*)),
+                    }
                 }
-            } else {
-                quote! {
-                    #state_ident::#ident(#end_enum, #(#field_params),*) => Some(Self::#orig_ident(#(#field_args),*)),
+                syn::Fields::Named(_) => quote! {
+                    #state_ident::#ident(#end_enum, _, #(#field_params),*) => Some(Self::#orig_ident { #(#field_args),* }),
+                },
+                syn::Fields::Unit => quote! {
+                    #state_ident::#ident(#end_enum) => Some(Self::#orig_ident),
                 }
             }
         });
@@ -761,7 +940,6 @@ fn from_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
                     return Ok(true);
                 }
 
-                println!("q {:?}", token);
                 match self.state {
                     #state_ident::Unknown => match token {
                         ::serser::token::Token::Enum(_) => {
@@ -822,4 +1000,30 @@ fn from_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
         }
     }
     .into())
+}
+
+fn get_field_tuple_params(fields: &syn::Fields) -> Vec<proc_macro2::TokenStream> {
+    match fields {
+        syn::Fields::Unnamed(fields) => fields
+            .unnamed
+            .iter()
+            .enumerate()
+            .map(|(j, _)| {
+                let ident = format_ident!("f{}", j);
+
+                quote! { ref mut #ident }
+            })
+            .collect::<Vec<_>>(),
+        syn::Fields::Named(fields) => fields
+            .named
+            .iter()
+            .enumerate()
+            .map(|(j, _)| {
+                let ident = format_ident!("f{}", j);
+
+                quote! { ref mut #ident }
+            })
+            .collect::<Vec<_>>(),
+        syn::Fields::Unit => Vec::new(),
+    }
 }
