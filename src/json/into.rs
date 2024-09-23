@@ -3,6 +3,8 @@ use std::str::FromStr;
 use base64::prelude::*;
 
 use crate::token::*;
+use crate::FromTokens;
+use crate::FromTokenSink;
 use crate::TokenSink;
 
 /// The error returned from [json_into_tokens].
@@ -22,6 +24,16 @@ pub enum ParseError<E: crate::error::Error> {
 
     /// A bytes string could not be decoded.
     Base64(base64::DecodeError),
+}
+
+/// Parses a JSON string into a token sink.
+pub fn json_into<F: FromTokens>(
+    json: &str,
+) -> Result<F, ParseError<<<F as FromTokenSink>::Sink as TokenSink>::Error>> {
+    let mut sink = F::new_sink();
+    json_into_tokens(&mut sink, json)?;
+
+    F::from_sink(sink).ok_or(ParseError::UnexpectedEnd)
 }
 
 /// Parses a JSON string into a token sink.
