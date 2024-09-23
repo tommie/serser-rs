@@ -35,6 +35,8 @@
 //! deserialization are fundamentally the same thing, just switching
 //! perspectives of the source and sink. It is a conversion from one
 //! representation to another, through a common data model.
+#![doc = include_str!("../README.md")]
+#![doc(html_playground_url = "https://play.rust-lang.org/")]
 
 use crate::token::*;
 
@@ -58,6 +60,13 @@ pub use into::iter_into_tokens;
 pub use into::IntoTokens;
 
 pub mod json;
+
+/// A module that puts the useful traits into scope.
+pub mod prelude {
+    pub use crate::from::FromTokenSink as _;
+    pub use crate::from::FromTokens as _;
+    pub use crate::into::IntoTokens as _;
+}
 
 pub mod test;
 pub mod token;
