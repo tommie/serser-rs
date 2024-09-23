@@ -11,6 +11,7 @@ readme = "README.md"
 [package]
 name = "serser"
 version = "0.1.0"
+description = "The SerSer serialization crate"
 edition.workspace = true
 authors.workspace = true
 repository.workspace = true
