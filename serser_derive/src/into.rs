@@ -126,25 +126,43 @@ fn into_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
             )
         })
         .collect::<Vec<_>>();
+    let kind_matches = data
+        .variants
+        .iter()
+        .map(|variant| {
+            let ident = &variant.ident;
+            let fields = variant
+                .fields
+                .iter()
+                .map(|_| format_ident!("_"))
+                .collect::<Vec<_>>();
+
+            match &variant.fields {
+                syn::Fields::Unnamed(_) => {
+                    quote! { Self::#ident (#(#fields),*) => Some(::serser::token::EnumKind::Tuple) }
+                }
+                syn::Fields::Named(_) => {
+                    quote! { Self::#ident {..} => Some(::serser::token::EnumKind::Struct) }
+                }
+                syn::Fields::Unit => quote! { Self::#ident => None },
+            }
+        })
+        .collect::<Vec<_>>();
     let variant_names = data.variants.iter().map(|variant| {
         let ident = &variant.ident;
         let name_str = syn::LitStr::new(
             format!("{}", ident).as_str(),
             proc_macro2::Span::call_site(),
         );
-        let fields = if let syn::Fields::Unnamed(fields) = &variant.fields {
-            fields
-                .unnamed
-                .iter()
-                .map(|_| format_ident!("_"))
-                .collect::<Vec<_>>()
-        } else {
-            Vec::new()
-        };
-        let captures = if fields.is_empty() {
-            quote! {}
-        } else {
-            quote! { (#(#fields),*) }
+        let fields = variant
+            .fields
+            .iter()
+            .map(|_| format_ident!("_"))
+            .collect::<Vec<_>>();
+        let captures = match &variant.fields {
+            syn::Fields::Unnamed(_) => quote! { (#(#fields),*) },
+            syn::Fields::Named(_) => quote! { {..} },
+            syn::Fields::Unit => quote! {},
         };
 
         quote! { Self::#ident #captures => #name_str, }
@@ -154,42 +172,73 @@ fn into_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
         .iter()
         .map(|variant| {
             let ident = &variant.ident;
-            let fields = if let syn::Fields::Unnamed(fields) = &variant.fields {
-                fields
-                    .unnamed
-                    .iter()
-                    .enumerate()
-                    .map(|(i, _)| format_ident!("f{}", i))
-                    .collect::<Vec<_>>()
-            } else {
-                Vec::new()
-            };
-            let captures = if fields.is_empty() {
-                quote! {}
-            } else {
-                quote! { (#(#fields),*) }
-            };
 
-            if fields.is_empty() {
-                quote! {
-                    Self::#ident #captures => {}
-                }
-            } else {
-                let num_fields = fields.len();
-                let yields = fields
-                    .iter()
-                    .map(|ident| quote! { #ident.into_tokens(sink)?; })
-                    .collect::<Vec<_>>();
+            match &variant.fields {
+                syn::Fields::Unnamed(_) => {
+                    let fields = variant
+                        .fields
+                        .iter()
+                        .enumerate()
+                        .map(|(i, _)| format_ident!("f{}", i))
+                        .collect::<Vec<_>>();
+                    let num_fields = fields.len();
+                    let yields = fields
+                        .iter()
+                        .map(|ident| quote! { #ident.into_tokens(sink)?; })
+                        .collect::<Vec<_>>();
 
-                quote! {
-                    Self::#ident #captures => {
-                        sink.yield_token(::serser::token::Token::Tuple(TupleMeta {
-                            size_hint: Some(#num_fields),
-                        }))?;
-                        #(#yields)*
-                        sink.yield_token(::serser::token::Token::EndTuple)?;
+                    quote! {
+                        Self::#ident (#(#fields),*) => {
+                            sink.yield_token(::serser::token::Token::Tuple(TupleMeta {
+                                size_hint: Some(#num_fields),
+                            }))?;
+                            #(#yields)*
+                            sink.yield_token(::serser::token::Token::EndTuple)?;
+                        }
                     }
                 }
+                syn::Fields::Named(orig_fields) => {
+                    let fields = variant
+                        .fields
+                        .iter()
+                        .enumerate()
+                        .map(|(j, field)| {
+                            let orig_ident = field.ident.as_ref().unwrap();
+                            let ident = format_ident!("f{}", j);
+                            quote! { #orig_ident: #ident }
+                        })
+                        .collect::<Vec<_>>();
+                    let field_names = orig_fields
+                        .named
+                        .iter()
+                        .map(|field| format!("{}", field.ident.as_ref().unwrap()))
+                        .collect::<Vec<_>>();
+                    let yields = orig_fields
+                        .named
+                        .iter()
+                        .enumerate()
+                        .map(|(j, field)| {
+                            let name_str = format!("{}", field.ident.as_ref().unwrap());
+                            let ident = format_ident!("f{}", j);
+
+                            quote! {
+                                sink.yield_token(::serser::token::Token::Field(#name_str))?;
+                                #ident.into_tokens(sink)?;
+                            }
+                        })
+                        .collect::<Vec<_>>();
+
+                    quote! {
+                        Self::#ident { #(#fields),* } => {
+                            sink.yield_token(::serser::token::Token::Struct(StructMeta {
+                                fields: Some(&[#(#field_names),*]),
+                            }))?;
+                            #(#yields)*
+                            sink.yield_token(::serser::token::Token::EndStruct)?;
+                        }
+                    }
+                }
+                syn::Fields::Unit => quote! { Self::#ident => {} },
             }
         })
         .collect::<Vec<_>>();
@@ -201,7 +250,9 @@ fn into_tokens_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<TokenSt
 
                 sink.yield_token(::serser::token::Token::Enum(EnumMeta {
                     variants: Some(&[#(::serser::token::EnumVariant::Str(#variants)),*]),
-                    kind: Some(::serser::token::EnumKind::Tuple),
+                    kind: match self {
+                        #(#kind_matches),*
+                    },
                 }))?;
                 sink.yield_token(::serser::token::Token::Variant(::serser::token::EnumVariant::Str(match self {
                     #(#variant_names)*
