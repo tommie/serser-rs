@@ -612,6 +612,21 @@ mod tests {
     }
 
     #[test]
+    fn test_json_into_tokens_u128() {
+        let cases = vec![
+            ("340282366920938463463374607431768211455", !0),
+        ];
+
+        for (json, want) in cases {
+            let mut got = TokenVec::new();
+            let mut expsink =
+                ExpectingTokenSink::new(&mut got, |_| Some(TokenTypes::new(TokenType::U128)));
+            json_into_tokens(&mut expsink, json.as_bytes()).unwrap();
+            assert_eq!(got.into_vec(), vec![OwningToken::U128(want)]);
+        }
+    }
+
+    #[test]
     fn test_json_into_tokens_char() {
         let cases = vec![(r#""a""#, 'a')];
 
