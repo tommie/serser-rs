@@ -1,3 +1,4 @@
+use std::cmp::min;
 use std::io;
 
 pub(crate) trait CharRead {
@@ -65,13 +66,21 @@ impl<R: io::Read> CharRead for UTF8Read<R> {
     }
 
     fn read_match(&mut self, s: &str) -> Result<(), io::Error> {
-        let mut buf = Vec::<u8>::with_capacity(s.len());
-        buf.resize(s.len(), 0);
+        const N: usize = 16;
 
-        self.r.read_exact(buf.as_mut_slice())?;
+        let mut buf: [u8; N] = [0; N];
+        let mut sb = s.as_bytes();
 
-        if s.as_bytes() != buf.as_slice() {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "failed match"));
+        while !sb.is_empty() {
+            let n = min(N, sb.len());
+            let b = &mut buf[..n];
+            self.r.read_exact(b)?;
+
+            if &sb[..n] != b {
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "failed match"));
+            }
+
+            sb = &sb[n..];
         }
 
         Ok(())
