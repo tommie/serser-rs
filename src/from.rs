@@ -203,6 +203,14 @@ impl<T: FromTokenSink> FromTokenSink for Vec<T> {
     fn from_sink(sink: Self::Sink) -> Option<Self> {
         sink.out
     }
+
+    fn expect_initial() -> Option<TokenTypes> {
+        if is_vec_u8::<Vec<T>>() {
+            Some(TokenTypes::new(TokenType::Bytes))
+        } else {
+            Some(TokenTypes::new(TokenType::Seq))
+        }
+    }
 }
 
 // From https://users.rust-lang.org/t/hack-to-specialize-w-write-for-vec-u8/100366/6.
