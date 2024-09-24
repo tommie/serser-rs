@@ -3,8 +3,13 @@ use std::io;
 
 pub(crate) trait CharRead {
     fn read_char(&mut self) -> Result<Option<char>, io::Error>;
+
+    /// Like read_char, but assumes there is no character pushed back.
+    fn read_char_nopop(&mut self) -> Result<Option<char>, io::Error>;
+
     fn read_match(&mut self, s: &str) -> Result<(), io::Error>;
     fn push_char(&mut self, c: char) -> Result<(), io::Error>;
+    fn can_pop_char(&self) -> bool;
 }
 
 /// Reads UTF-8 characters.
@@ -24,9 +29,13 @@ impl<R: io::Read> UTF8Read<R> {
 impl<R: io::Read> CharRead for UTF8Read<R> {
     fn read_char(&mut self) -> Result<Option<char>, io::Error> {
         if let Some(c) = self.back.take() {
-            return Ok(Some(c));
+            Ok(Some(c))
+        } else {
+            self.read_char_nopop()
         }
+    }
 
+    fn read_char_nopop(&mut self) -> Result<Option<char>, io::Error> {
         let mut buf: [u8; 4] = [0; 4];
 
         if self.r.read(&mut buf[..1])? < 1 {
@@ -93,6 +102,10 @@ impl<R: io::Read> CharRead for UTF8Read<R> {
             self.back = Some(c);
             Ok(())
         }
+    }
+
+    fn can_pop_char(&self) -> bool {
+        self.back.is_some()
     }
 }
 

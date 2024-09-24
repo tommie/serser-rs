@@ -286,8 +286,10 @@ fn parse_in_string<'b, S: TokenSink, R: CharRead>(
     let mut esc_char = 0;
     let mut out = String::new();
 
+    assert!(!r.can_pop_char());
+
     loop {
-        match read_char(r)? {
+        match read_char_nopop(r)? {
             Some(c) if esc_n == -1 => {
                 esc_n = 0;
                 match c {
@@ -375,8 +377,10 @@ fn parse_number<'b, S: TokenSink, R: CharRead>(
     let mut buf = String::with_capacity(16);
     buf.push(first_char);
 
+    assert!(!r.can_pop_char());
+
     loop {
-        let c = read_char(r)?;
+        let c = read_char_nopop(r)?;
         match c {
             Some(c) if c.is_digit(10) => {}
             Some('.' | '-' | '+' | 'e' | 'E') => {}
@@ -528,6 +532,12 @@ fn read_char<R: CharRead, E: crate::error::Error>(
     r: &mut R,
 ) -> Result<Option<char>, ParseError<E>> {
     r.read_char().map_err(|err| ParseError::Read(err))
+}
+
+fn read_char_nopop<R: CharRead, E: crate::error::Error>(
+    r: &mut R,
+) -> Result<Option<char>, ParseError<E>> {
+    r.read_char_nopop().map_err(|err| ParseError::Read(err))
 }
 
 fn read_match<R: CharRead, E: crate::error::Error>(
