@@ -32,13 +32,19 @@ impl<R: io::Read> CharRead for UTF8Read<R> {
             return Ok(None);
         }
 
-        let (mut c, n) = if buf[0] & 0x80 == 0 {
+        if buf[0] < 0x80 {
             return Ok(Some(buf[0] as char));
-        } else if buf[0] & 0xE0 == 0xC0 {
+        }
+
+        let (mut c, n) = if buf[0] < 0xE0 {
+            if buf[0] < 0xC0 {
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "bad UTF-8"));
+            }
+
             ((buf[0] & 0x1F) as u32, 1)
-        } else if buf[0] & 0xF0 == 0xE0 {
+        } else if buf[0] < 0xF0 {
             ((buf[0] & 0x0F) as u32, 2)
-        } else if buf[0] & 0xF8 == 0xF0 {
+        } else if buf[0] < 0xF8 {
             ((buf[0] & 0x07) as u32, 3)
         } else {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "bad UTF-8"));
@@ -78,5 +84,83 @@ impl<R: io::Read> CharRead for UTF8Read<R> {
             self.back = Some(c);
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn utf8_read_char_empty() {
+        let mut ur = UTF8Read::new("".as_bytes());
+        assert_eq!(ur.read_char().unwrap(), None);
+    }
+
+    #[test]
+    fn utf8_read_char_last_byte() {
+        let mut ur = UTF8Read::new("a".as_bytes());
+        assert_eq!(ur.read_char().unwrap(), Some('a'));
+    }
+
+    #[test]
+    fn utf8_read_char_byte() {
+        let mut ur = UTF8Read::new("ab".as_bytes());
+        assert_eq!(ur.read_char().unwrap(), Some('a'));
+    }
+
+    #[test]
+    fn utf8_read_char_last_unicode2() {
+        let mut ur = UTF8Read::new("\u{07FF}".as_bytes());
+        assert_eq!(ur.read_char().unwrap(), Some('\u{07FF}'));
+    }
+
+    #[test]
+    fn utf8_read_char_last_unicode3() {
+        let mut ur = UTF8Read::new("\u{FFFF}".as_bytes());
+        assert_eq!(ur.read_char().unwrap(), Some('\u{FFFF}'));
+    }
+
+    #[test]
+    fn utf8_read_char_last_unicode4() {
+        let mut ur = UTF8Read::new("\u{10FFFF}".as_bytes());
+        assert_eq!(ur.read_char().unwrap(), Some('\u{10FFFF}'));
+    }
+
+    #[test]
+    fn utf8_read_char_unicode4() {
+        let mut ur = UTF8Read::new("\u{10FFFF}b".as_bytes());
+        assert_eq!(ur.read_char().unwrap(), Some('\u{10FFFF}'));
+    }
+
+    #[test]
+    fn utf8_read_match_short() {
+        let mut ur = UTF8Read::new("Hello".as_bytes());
+        ur.read_match("Hello").unwrap();
+    }
+
+    #[test]
+    fn utf8_read_match_long() {
+        let mut ur = UTF8Read::new("It's a small world after all".as_bytes());
+        ur.read_match("It's a small world after all").unwrap();
+    }
+
+    #[test]
+    fn utf8_read_match_short_fail() {
+        let mut ur = UTF8Read::new("Hello".as_bytes());
+        assert_eq!(ur.read_match("World").unwrap_err().kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn utf8_read_match_long_fail() {
+        let mut ur = UTF8Read::new("It's a small world after all".as_bytes());
+        assert_eq!(ur.read_match("It's a small world after?").unwrap_err().kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn utf8_push_read() {
+        let mut ur = UTF8Read::new("".as_bytes());
+        ur.push_char('a').unwrap();
+        assert_eq!(ur.read_char().unwrap(), Some('a'));
     }
 }
