@@ -29,6 +29,9 @@ pub enum ParseError<E: crate::error::Error> {
     /// Something that looked like a number couldn't be parsed as one.
     ParseFloat(std::num::ParseFloatError),
 
+    /// A number that was expected to be an integer couldn't be parsed as one.
+    ParseInt(std::num::ParseIntError),
+
     /// A bytes string could not be decoded.
     Base64(base64::DecodeError),
 }
@@ -376,7 +379,7 @@ fn parse_number<'b, S: TokenSink, R: CharRead>(
         let c = read_char(r)?;
         match c {
             Some(c) if c.is_digit(10) => {}
-            Some('.' | 'e' | 'E' | '+' | '-') => {}
+            Some('.' | '-' | '+' | 'e' | 'E') => {}
             Some(c) => {
                 push_char(r, c)?;
                 break;
@@ -403,21 +406,26 @@ fn as_number_token<'b, E: crate::error::Error>(
 
     if let Some(tts) = expected {
         if !tts.contains(TokenType::F64) {
+            if tts.contains(TokenType::F32) {
+                // Give higher priority to f32, since larger integer
+                // formats can't use f64::from_str.
+                return Ok(Token::F32(v as f32));
+            }
+
             for tt in tts.iter() {
                 match tt {
                     TokenType::U8 => return Ok(Token::U8(v as u8)),
                     TokenType::U16 => return Ok(Token::U16(v as u16)),
                     TokenType::U32 => return Ok(Token::U32(v as u32)),
-                    TokenType::U64 => return Ok(Token::U64(v as u64)),
-                    TokenType::U128 => return Ok(Token::U128(v as u128)),
-                    TokenType::Usize => return Ok(Token::Usize(v as usize)),
+                    TokenType::U64 => return Ok(Token::U64(u64::from_str(s).map_err(|err| ParseError::ParseInt(err))?)),
+                    TokenType::U128 => return Ok(Token::U128(u128::from_str(s).map_err(|err| ParseError::ParseInt(err))?)),
+                    TokenType::Usize => return Ok(Token::Usize(usize::from_str(s).map_err(|err| ParseError::ParseInt(err))?)),
                     TokenType::I8 => return Ok(Token::I8(v as i8)),
                     TokenType::I16 => return Ok(Token::I16(v as i16)),
                     TokenType::I32 => return Ok(Token::I32(v as i32)),
-                    TokenType::I64 => return Ok(Token::I64(v as i64)),
-                    TokenType::I128 => return Ok(Token::I128(v as i128)),
-                    TokenType::Isize => return Ok(Token::Isize(v as isize)),
-                    TokenType::F32 => return Ok(Token::F32(v as f32)),
+                    TokenType::I64 => return Ok(Token::I64(i64::from_str(s).map_err(|err| ParseError::ParseInt(err))?)),
+                    TokenType::I128 => return Ok(Token::I128(i128::from_str(s).map_err(|err| ParseError::ParseInt(err))?)),
+                    TokenType::Isize => return Ok(Token::Isize(isize::from_str(s).map_err(|err| ParseError::ParseInt(err))?)),
                     TokenType::Str => return Ok(Token::Str(s)),
                     _ => {}
                 }
