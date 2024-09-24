@@ -38,6 +38,7 @@ fn criterion_basic(c: &mut Criterion) {
     basic_json_into!(char, r#""H""# => 'H');
     basic_json_into!(Vec<u8>, r#""AA==""# => b"\x00".to_vec());
     basic_json_into!(String, r#""Hello""# => "Hello".to_owned());
+    basic_json_into!(String, "\"\u{10FFFF}\u{10FFFF}\u{10FFFF}\u{10FFFF}\u{10FFFF}\"" => "\u{10FFFF}\u{10FFFF}\u{10FFFF}\u{10FFFF}\u{10FFFF}".to_owned());
 }
 
 criterion_group!(benches, criterion_basic);
