@@ -27,7 +27,7 @@ impl<R: io::Read> CharRead for UTF8Read<R> {
             return Ok(Some(c));
         }
 
-        let mut buf: [u8; 3] = [0; 3];
+        let mut buf: [u8; 4] = [0; 4];
 
         if self.r.read(&mut buf[..1])? < 1 {
             return Ok(None);
