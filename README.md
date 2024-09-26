@@ -8,6 +8,14 @@
 serser is a serialization/deserialization framework for [Rust](https://rust-lang.org/).
 It uses a stream of tokens (e.g. U32, Seq, and EndSeq) as the intermediate representation.
 
+## Status
+
+This is **alpha** software, and a research project.
+The features that work, they work, but might change.
+Trying to find a better API for serialization.
+
+Thoughts are welcome.
+
 ## Examples
 
 ### Rust To JSON
