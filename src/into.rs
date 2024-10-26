@@ -43,25 +43,6 @@ basic_into_tokens![
     Str => &'_ str,
 ];
 
-impl IntoTokens for () {
-    fn into_tokens<S: TokenSink>(&self, sink: &mut S) -> Result<(), S::Error> {
-        sink.yield_token(Token::Unit).map(|_| ())
-    }
-}
-
-impl<'a, K, V> IntoTokens for (K, V)
-where
-    K: IntoTokens,
-    V: IntoTokens,
-{
-    fn into_tokens<S: TokenSink>(&self, sink: &mut S) -> Result<(), S::Error> {
-        sink.yield_token(Token::Tuple(TupleMeta { size_hint: Some(2) }))?;
-        self.0.into_tokens(sink)?;
-        self.1.into_tokens(sink)?;
-        sink.yield_token(Token::EndTuple).map(|_| ())
-    }
-}
-
 impl<T> IntoTokens for [T]
 where
     T: IntoTokens,
@@ -122,21 +103,6 @@ mod tests {
         let mut got = TokenVec::new();
         42u32.into_tokens(&mut got).unwrap();
         assert_eq!(got.into_vec(), vec![OwningToken::U32(42)]);
-    }
-
-    #[test]
-    fn test_tuple_into() {
-        let mut got = TokenVec::new();
-        (42u32, true).into_tokens(&mut got).unwrap();
-        assert_eq!(
-            got.into_vec(),
-            vec![
-                OwningToken::Tuple(TupleMeta { size_hint: Some(2) }),
-                OwningToken::U32(42),
-                OwningToken::Bool(true),
-                OwningToken::EndTuple,
-            ]
-        );
     }
 
     #[test]
