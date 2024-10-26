@@ -69,6 +69,7 @@ pub use error::TokenError;
 mod from;
 pub use from::FromTokenSink;
 pub use from::FromTokens;
+mod from_tuple;
 
 mod into;
 pub use into::iter_into_tokens;
