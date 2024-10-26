@@ -76,6 +76,7 @@ pub use into::iter_into_tokens;
 pub use into::IntoTokens;
 mod into_tuple;
 
+pub mod csv;
 pub mod json;
 
 /// A module that puts the useful traits into scope.
