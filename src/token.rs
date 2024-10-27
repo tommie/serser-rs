@@ -150,6 +150,14 @@ impl TokenTypes {
         self.0 & (1 << tt as u64) != 0
     }
 
+    pub fn contains_any(&self, tts: TokenTypes) -> bool {
+        self.0 & tts.0 != 0
+    }
+
+    pub fn contains_all(&self, tts: TokenTypes) -> bool {
+        self.0 & tts.0 == tts.0
+    }
+
     pub fn iter(&self) -> TypeIter {
         TypeIter(*self, 0)
     }

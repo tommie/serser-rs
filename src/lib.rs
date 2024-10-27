@@ -55,6 +55,8 @@
 
 use crate::token::*;
 
+mod convert_str;
+
 /// The derive macro that automatically implements the [IntoTokens]
 /// for your structs and enums.
 pub mod derive {

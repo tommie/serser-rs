@@ -7,7 +7,7 @@ mod from;
 pub use from::csv_from_tokens;
 pub use from::WriteError;
 
-//mod into;
-//pub use super::csv::into::csv_into;
-//pub use super::csv::into::csv_into_tokens;
-//pub use super::csv::into::ParseError;
+mod into;
+pub use into::csv_into;
+pub use into::csv_into_tokens;
+pub use into::ParseError;
