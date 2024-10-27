@@ -20,6 +20,7 @@ readme.workspace = true
 
 [dependencies]
 base64 = "0.22.1"
+futures = { version = "0.3.31", optional = true }
 maybe-owned = "0.3.4"
 serser_derive = { version = "0.1.0", path = "serser_derive" }
 
@@ -29,3 +30,6 @@ criterion = "0.5.1"
 [[bench]]
 name = "criterion"
 harness = false
+
+[features]
+futures = ["dep:futures"]

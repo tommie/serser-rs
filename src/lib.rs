@@ -69,6 +69,8 @@ pub use error::Error;
 pub use error::TokenError;
 
 mod from;
+#[cfg(feature = "futures")]
+mod from_async;
 pub use from::FromTokenSink;
 pub use from::FromTokens;
 mod from_tuple;
